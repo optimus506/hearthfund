@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-r">
+  <div class="section-head"><h2 id="h-r">Where the money goes</h2>
+    <div class="seg" role="group" aria-label="Which numbers">
+      <button type="button" data-flow="actual" data-v="active" aria-pressed="true">Actual, last 12 months</button>
+      <button type="button" data-flow="recent" data-v="active" aria-pressed="false">Actual, last 2 months</button>
+      <button type="button" data-flow="planned" data-v="active" aria-pressed="false">Budget, next 12 months</button>
+    </div>
+  </div>
+  <div id="flowKpis"></div>
+  <details id="flowBox" open><summary id="flowToggle">Chart</summary><div class="flowwrap"><div class="chart" id="flow"></div></div></details>
+  <p class="muted small" id="flowNote"></p>
+</section>
+<section class="card" aria-labelledby="h-b"><h2 id="h-b">Breakdown</h2><p class="muted small">Per month, averaged over the period.</p><div id="flowList"></div></section>
+<section class="card" aria-labelledby="h-g"><h2 id="h-g">Report groups</h2>
+  <p class="muted small">A group puts payee rules and recurring items together under one name and colour in the chart. Anything not in a group is shown on its own.</p>
+  <div class="list" id="flowGroups"></div>
+  <form class="form" id="fgForm" hidden>
+    <div class="field"><label for="fgName">Group</label><input id="fgName" type="text" maxlength="40"></div>
+    <div class="field"><label for="fgColour">Colour</label><input id="fgColour" type="color" value="#3b6fb6"></div>
+    <div class="field"><label for="fgMembers">Members</label><select id="fgMembers" multiple size="4"></select></div>
+    <div class="field"><button class="btn" type="submit">Add group</button></div>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/report.js"></script>{% endblock %}

@@ -1,0 +1,2 @@
+# Build backend for the image (see requirements-build.lock)
+setuptools>=77

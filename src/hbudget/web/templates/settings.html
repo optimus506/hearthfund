@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-set">
+  <h2 id="h-set">Settings</h2>
+  <form class="form" id="settingsForm">
+    <div class="field"><label for="stBalance">Checkbook balance</label><input id="stBalance" type="text" inputmode="decimal"></div>
+    <div class="field"><label for="stAsOf">…as of</label><input id="stAsOf" type="date"></div>
+    <div class="field"><label for="stCushion">Cushion (warn below)</label><input id="stCushion" type="text" inputmode="decimal"></div>
+    <div class="field"><label for="stVariance">Bill off by more than %</label><input id="stVariance" type="text" inputmode="decimal"></div>
+    <div class="field"><label for="stUnsched">Warn about unscheduled bills due within days</label><input id="stUnsched" type="text" inputmode="numeric"></div>
+    <div class="field"><label for="stGrace">Expected item late after days</label><input id="stGrace" type="text" inputmode="numeric"></div>
+    <div class="field"><label for="stRecurring"><input id="stRecurring" type="checkbox"> Flag repeating charges with no rule</label></div>
+    <div class="field"><label for="stBefore">Match postings up to days before the due date</label><input id="stBefore" type="text" inputmode="numeric"></div>
+    <div class="field"><label for="stAfter">…and days after</label><input id="stAfter" type="text" inputmode="numeric"></div>
+    <div class="field"><label for="stTolPct">Automatic match within %</label><input id="stTolPct" type="text" inputmode="decimal"></div>
+    <div class="field"><label for="stTolAbs">…or within amount</label><input id="stTolAbs" type="text" inputmode="decimal"></div>
+    <div class="field"><label for="stMode">Forecast horizon</label><select id="stMode"><option value="rolling">Rolling (months ahead)</option><option value="fixed">Fixed end date</option></select></div>
+    <div class="field"><label for="stMonths">Months ahead</label><input id="stMonths" type="text" inputmode="numeric"></div>
+    <div class="field"><label for="stEnd">Fixed end date</label><input id="stEnd" type="date"></div>
+    <div class="field"><label for="stAutopay">Autopay colour</label><input id="stAutopay" type="color"></div>
+    <div class="field"><label for="stManual">Scheduled colour</label><input id="stManual" type="color"></div>
+    <div class="field"><label for="stWeek">Weeks start on</label><select id="stWeek"><option value="0">Monday</option><option value="6">Sunday</option></select></div>
+    <div class="field"><label for="stCardMove"><input id="stCardMove" type="checkbox"> Forecast: move card-funded bills to the card on payday (one "Move to card" per card, instead of each bill on its due date)</label></div>
+    <div class="field"><label for="stWins"><input id="stWins" type="checkbox"> Show wins on Home (debts paid off, goals reached, weeks above the cushion)</label></div>
+    <div class="field"><button class="btn primary" type="submit">Save settings</button></div>
+  </form>
+  <p class="muted small">Spending caps are on the <a href="checkup">Check-up</a> page and report groups on the <a href="report">Report</a> page.</p>
+  {% if plaid_on %}<p class="muted small">Bring transactions in from your bank automatically: <a href="connections">Bank connection</a>.</p>{% endif %}
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/settings.js"></script>{% endblock %}

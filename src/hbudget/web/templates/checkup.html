@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-c">
+  <div class="section-head"><h2 id="h-c">Bill check-up</h2><span class="muted small" id="cuRange"></span></div>
+  <p class="muted small">What the bank actually paid compared with the budget. A bill more than 10% off is flagged so the budget can be adjusted.</p>
+  <div id="cuTable"></div>
+</section>
+<section class="card" aria-labelledby="h-tr"><h2 id="h-tr">Not budgeted, by week</h2>
+  <p class="muted small">Spending under "Track only" payee rules over the last 8 weeks of bank history.</p>
+  <div id="cuTracked"></div>
+</section>
+<section class="card" aria-labelledby="h-caps"><h2 id="h-caps">Spending caps</h2>
+  <p class="muted small">A cap adds up what some payee rules spent each week or month and flags the periods over it.</p>
+  <div class="list" id="capList"></div>
+  <form class="form" id="capForm" hidden>
+    <div class="field"><label for="capName">Cap name</label><input id="capName" type="text" maxlength="40"></div>
+    <div class="field"><label for="capRules">Rules it counts</label><select id="capRules" multiple size="3"></select></div>
+    <div class="field"><label for="capPeriod">Per</label><select id="capPeriod"><option value="week">Week</option><option value="month">Month</option></select></div>
+    <div class="field"><label for="capAmount">Amount</label><input id="capAmount" type="text" inputmode="decimal"></div>
+    <div class="field"><button class="btn" type="submit">Add cap</button></div>
+  </form>
+  <div id="cuCaps"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/checkup.js"></script>{% endblock %}

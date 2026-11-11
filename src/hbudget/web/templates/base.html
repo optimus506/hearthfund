@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>{% block title %}{{ title }}{% endblock %} · Hearthfund</title>
+<link rel="stylesheet" href="{{ static }}/css/app.css">
+<link rel="icon" href="{{ static }}/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="{{ static }}/apple-touch-icon.png">
+<link rel="manifest" href="{{ static }}/manifest.webmanifest">
+<meta name="theme-color" content="#36609c">
+<meta name="apple-mobile-web-app-title" content="Budget">
+</head>
+{%- macro icon(name) -%}
+<svg class="ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+{%- if name == 'home' %}<path d="M3 11.5 12 4l9 7.5M5.5 9.5V20h5v-6h3v6h5V9.5"/>
+{%- elif name == 'bills' %}<path d="M6 3h12v18l-3-2-3 2-3-2-3 2zM9 8h6M9 12h6M9 16h3"/>
+{%- elif name == 'plan' %}<path d="M4 19h16M6 16l4-5 3 3 5-7M15 7h3v3"/>
+{%- elif name == 'money' %}<path d="M3 7h18v10H3zM12 9.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5zM6 10v4M18 10v4"/>
+{%- else %}<path d="M5 12h.01M12 12h.01M19 12h.01"/>{% endif -%}
+</svg>
+{%- endmacro %}
+<body{% if household %} class="has-nav"{% endif %}>
+<a class="skip" href="#main">Skip to content</a>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <div class="eyebrow">{% if household %}{{ household.name }}{% else %}Hearthfund{% endif %}</div>
+      <h1>{{ title }}</h1>
+    </div>
+    <div class="who">
+      {% if user %}
+      <details class="menu">
+        <summary class="btn"><span>{{ user.username }}</span>{% if role %}<span class="muted small"> · {{ role }}</span>{% endif %}</summary>
+        <div class="menu-body">
+          {% if households and households|length > 1 %}
+          <p class="eyebrow">Households</p>
+          {% for h in households %}<a href="/h/{{ h.id }}"{% if household and h.id == household.id %} aria-current="true"{% endif %}>{{ h.name }}</a>{% endfor %}
+          <hr>
+          {% endif %}
+          <a href="/account">Account</a>
+          {% if user.is_admin %}<a href="/admin">Admin</a>{% endif %}
+          <button type="button" id="theme">Switch light or dark</button>
+          <form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf }}"><button type="submit">Sign out</button></form>
+        </div>
+      </details>
+      {% else %}
+      <button class="btn" type="button" id="theme" aria-label="Switch light or dark theme">Theme</button>
+      {% endif %}
+    </div>
+  </header>
+  {% if household %}
+  <nav class="sections" aria-label="Sections">
+    {% for s in nav.sections %}<a href="/h/{{ household.id }}/{{ s.href }}" data-s="{{ s.key }}"{% if s.current %} aria-current="page"{% endif %}>{{ icon(s.key) }}<span>{{ s.label }}</span></a>{% endfor %}
+  </nav>
+  <div class="tabrow">
+    {% if nav.sub %}
+    <div class="tabwrap">
+    <nav class="tabs" id="subtabs" aria-label="{{ nav.sections | selectattr('current') | map(attribute='label') | first }} pages">
+      {% for p in nav.sub %}<a href="/h/{{ household.id }}/{{ p.key }}"{% if p.key == tab %} aria-current="page"{% endif %}>{{ p.label }}</a>{% endfor %}
+    </nav>
+    <button class="tabmore" type="button" id="tabmore" aria-label="More pages in this section" hidden>›</button>
+    </div>
+    {% endif %}
+    <form class="pagesearch" role="search" hidden><input id="pageSearch" type="search" maxlength="60" autocomplete="off" placeholder="Search this page" aria-label="Search this page"></form>
+  </div>
+  {% if strip %}<p class="strip slim small" id="strip" aria-label="Summary"></p>
+  <p class="alertlink small" id="alertlink" hidden></p>{% endif %}
+  {% endif %}
+  <p class="msg" id="msg" role="status" hidden></p>
+  <main id="main" class="main">
+  {% block content %}{% endblock %}
+  </main>
+  <p class="foot">Hearthfund {{ version }} · runs on your own server; {% if plaid_on %}with the bank connection turned on, it also fetches transactions from Plaid.{% else %}nothing leaves it.{% endif %}</p>
+</div>
+<script type="application/json" id="page-data">{{ page_data|tojson }}</script>
+<script type="module" src="{{ static }}/js/api.js"></script>
+{% if household %}<script type="module" src="{{ static }}/js/search.js"></script>
+<script type="module" src="{{ static }}/js/tabs.js"></script>{% endif %}
+{% block scripts %}{% endblock %}
+</body>
+</html>

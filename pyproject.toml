@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hearthfund"
+dynamic = ["version"]   # from hbudget.__version__ (src/hbudget/__init__.py), the one place it is set
+description = "Self-hosted household budget: checkbook forecast, bill tracking and bank reconciliation."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "python-multipart>=0.0.18",
+  "jinja2>=3.1.4",
+  "openpyxl>=3.1",
+  "defusedxml>=0.7",
+  "pyyaml>=6.0",
+  "jsonschema>=4.23",
+  "cryptography>=43",   # seals Plaid access tokens (docs/PLAID.md); used only when HBUDGET_PLAID is on
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5", "httpx>=0.27", "ruff>=0.6", "mypy>=1.11", "pip-audit>=2.7",
+       "types-PyYAML", "types-jsonschema"]
+# the browser smoke test (tests/e2e); never needed to run the app
+e2e = ["playwright>=1.49"]   # 1.49+ ships chromium-headless-shell
+
+[project.scripts]
+hbudget = "hbudget.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "hbudget.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+hbudget = ["web/templates/**/*", "web/static/**/*", "db/migrations/*.sql", "schema/*.json", "schema/*.yaml"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF"]
+ignore = ["S101", "RUF001", "RUF002", "RUF003", "UP031"]  # %-formatting is the house style
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "B011"]
+"private_tests/**" = ["S"]
+"scripts/**" = ["S603", "S607", "S314"]  # the scanner reads trusted private files; %-format kept for log lines
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["hbudget"]
+
+[[tool.mypy.overrides]]
+module = ["openpyxl.*", "defusedxml.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "private_tests"]
+pythonpath = ["src", "tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["hbudget"]
+branch = true

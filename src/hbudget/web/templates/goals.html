@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-g">
+  <div class="section-head"><h2 id="h-g">Goals</h2><span class="muted small" id="gBills"></span></div>
+  <p class="muted small">What you are working towards. The app moves no money: type in what you have put aside, and the debt-free goal follows the balances on the Debts tab.</p>
+  <div id="goalList"><div class="empty">Loading…</div></div>
+</section>
+<section class="card" aria-labelledby="h-ga">
+  <h2 id="h-ga">Add a goal</h2>
+  <form class="form" id="goalForm">
+    <input type="hidden" id="gId">
+    <div class="field"><label for="gKind">Kind</label><select id="gKind">
+      <option value="emergency">Emergency fund (months of bills)</option><option value="savings">Save an amount</option><option value="debt_free">Debt-free</option></select></div>
+    <div class="field"><label for="gName">Name</label><input id="gName" type="text" maxlength="60" placeholder="e.g. Rainy-day fund"></div>
+    <div class="field" data-for="emergency"><label for="gMonths">Months of bills</label><input id="gMonths" type="text" inputmode="numeric" value="3"></div>
+    <div class="field" data-for="savings"><label for="gTarget">Target amount</label><input id="gTarget" type="text" inputmode="decimal"></div>
+    <div class="field" data-for="emergency savings"><label for="gSaved">Put aside so far</label><input id="gSaved" type="text" inputmode="decimal" value="0"></div>
+    <div class="field" data-for="emergency savings"><label for="gBy">By (optional)</label><input id="gBy" type="date"></div>
+    <div class="field"><button class="btn primary" id="gSave" type="submit">Add goal</button></div>
+    <div class="field"><button class="btn" id="gCancel" type="button" hidden>Cancel</button></div>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/goals.js"></script>{% endblock %}

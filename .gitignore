@@ -1,0 +1,27 @@
+# Private data never belongs in this repo
+private_tests/
+data/
+certs/*
+!certs/.gitkeep
+*.ods
+*.xlsx
+!tests/fixtures/**/*.ods
+!tests/fixtures/**/*.xlsx
+.env
+*.db
+*.sqlite*
+
+# Python / tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+*.egg-info/
+.prev-build/

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-d">
+  <h2 id="h-d">Debts and accounts</h2>
+  <p class="muted small">Type in each balance from the statement. Do not enter card or account numbers.</p>
+  <div id="debtTable"></div>
+  <form class="form" id="debtForm">
+    <input type="hidden" id="dId">
+    <div class="field"><label for="dName">Name</label><input id="dName" type="text" maxlength="60" placeholder="e.g. Card A"></div>
+    <div class="field"><label for="dKind">Kind</label><select id="dKind"><option value="credit_card">Credit card</option><option value="loan">Loan</option><option value="mortgage">Mortgage</option><option value="retirement_loan">Retirement-plan loan</option><option value="other">Other</option></select></div>
+    <div class="field"><label for="dBal">Balance</label><input id="dBal" type="text" inputmode="decimal"></div>
+    <div class="field"><label for="dApr">APR %</label><input id="dApr" type="text" inputmode="decimal" placeholder="18.5"></div>
+    <div class="field"><label for="dPay">Monthly payment</label><input id="dPay" type="text" inputmode="decimal"></div>
+    <div class="field"><label for="dMin">Minimum payment</label><input id="dMin" type="text" inputmode="decimal" placeholder="optional"></div>
+    <div class="field"><label for="dLimit">Credit limit</label><input id="dLimit" type="text" inputmode="decimal" placeholder="optional"></div>
+    <div class="field"><label for="dPromo">Promo rate ends</label><input id="dPromo" type="date"></div>
+    <div class="field"><label for="dAfter">APR after promo %</label><input id="dAfter" type="text" inputmode="decimal" placeholder="optional"></div>
+    <div class="field"><label for="dDeferred"><input id="dDeferred" type="checkbox"> Deferred interest</label></div>
+    <div class="field"><label for="dMortgage"><input id="dMortgage" type="checkbox"> This is the mortgage</label></div>
+    <div class="field"><label for="dInclude"><input id="dInclude" type="checkbox" checked> Include in the payoff plan</label></div>
+    <div class="field"><button class="btn primary" id="dSave" type="submit">Add debt</button></div>
+    <div class="field"><button class="btn" id="dCancel" type="button" hidden>Cancel</button></div>
+  </form>
+</section>
+<section class="card" aria-labelledby="h-p">
+  <h2 id="h-p">Payoff plan</h2>
+  <p class="muted small">Each debt gets its payment; when one is paid off its payment moves to the next. Extra money goes first to a deferred-interest promo that is still running, then to the debt the method picks.</p>
+  <div class="form">
+    <div class="field"><label for="pMethod">Method</label><select id="pMethod"><option value="avalanche">Highest interest first</option><option value="snowball">Smallest balance first</option></select></div>
+    <div class="field"><label for="pMortgage">Mortgage</label><select id="pMortgage"><option value="out">Leave out of plan</option><option value="in">Include in plan</option></select></div>
+    <div class="field"><label for="pExtra">Extra each month</label><input id="pExtra" type="text" inputmode="decimal" value="0"></div>
+    <div class="field"><label for="pOnce">One-time extra</label><input id="pOnce" type="text" inputmode="decimal" value="0"></div>
+    <div class="field"><label for="pOnceM">In month</label><input id="pOnceM" type="month"></div>
+  </div>
+  <div id="payoff"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/debts.js"></script>{% endblock %}

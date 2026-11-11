@@ -1,0 +1,299 @@
+# Example bill system for Hearthfund.
+#
+# This is a FAKE household with round numbers. Copy it, change the names and amounts to yours, and import it
+# (More > Import > Bill system, or `hbudget import-bills examples/bill-system.example.yaml`; with Docker:
+# `docker compose exec -T app hbudget import-bills - < examples/bill-system.example.yaml`, which also works
+# with /dev/stdin in place of -). Then reconcile examples/sample-bank.csv (Money > Uploads, or
+# `hbudget reconcile examples/sample-bank.csv`).
+#
+# Conventions
+#   - Money is in dollars with at most two decimals: 150, 150.5 or "1,800.00".
+#   - Amounts here are always positive. Whether a line is money in or money out comes from the section it is in
+#     (income / bills / spending).
+#   - Dates are YYYY-MM-DD. Schedules here are given by a day of the month or a weekday, counted from the as-of
+#     date below (2029-03-01 here, so it matches examples/sample-bank.csv). Without as_of they start on the day you
+#     import the file. The only other fixed date is a promo end date on the Accounts list.
+#   - ids are short lower-case names (letters, digits, - and _). Other entries refer to them (funded_by, card, ...).
+#
+# The full format is described in docs/ARCHITECTURE.md (section 13) and schema/bill-system.schema.json.
+
+format: household-budget/bill-system
+version: 1
+
+household:
+  name: Example household
+  currency: USD            # the app shows US dollars only for now; another code is kept but changes nothing
+  # The checkbook balance on the as-of date. After your first bank reconciliation the app keeps this up to date.
+  start_balance: 2500
+  # The day that balance is from. Rows are generated from this day on. It is fixed here so that
+  # examples/sample-bank.csv reconciles against this file; for your own file, use today's date or leave it out
+  # (then it is the import day).
+  as_of: 2029-03-01
+  horizon:
+    mode: rolling            # rolling: always keep `months` of rows ahead. fixed: stop at `end`.
+    months: 15
+
+settings:
+  week_starts: monday
+  reconcile:
+    days_before: 12          # a bill can be paid up to 12 days before its due date ...
+    days_after: 21           # ... or up to 21 days after it, and still match
+    tolerance_pct: 10        # an automatic match needs the bank amount within 10% ...
+    tolerance_abs: 25        # ... or within $25, whichever is larger
+  status_colours:            # bill status colours (also used when importing a spreadsheet)
+    autopay: "#b6d7a8"       # green: paid automatically
+    manual: "#ec9ba4"        # pink: scheduled by hand
+
+# Accounts: the checking account, credit cards and debts. Debts appear on the Debts tab and in the payoff plan.
+accounts:
+  - id: checking
+    name: Checking
+    kind: checking
+  - id: rewards-card
+    name: Rewards card
+    kind: credit_card
+    balance: 3000
+    apr: 24.99
+    payment: 400             # what you actually pay each month
+    minimum: 90
+    limit: 8000
+  - id: car-loan
+    name: Car loan
+    kind: loan
+    balance: 9000
+    apr: 6.5
+    payment: 350
+    minimum: 350
+  - id: appliance-promo
+    name: Appliance store financing
+    kind: credit_card
+    balance: 1500
+    apr: 0                   # 0% promotional rate ...
+    promo_ends: 2029-09-01   # ... until this date (change it to yours)
+    apr_after: 27.5          # the rate charged afterwards
+    deferred_interest: true  # if any balance is left when the promo ends, interest for the whole promo period is added
+    payment: 125
+    minimum: 40
+    limit: 2500
+  - id: home-loan
+    name: Mortgage
+    kind: mortgage
+    is_mortgage: true        # tracked, but left out of the payoff plan unless you switch it on
+    balance: 240000
+    apr: 5.5
+    payment: 1800
+    minimum: 1800
+
+# Money in. Paydays can move to the Friday before when they fall on a weekend.
+income:
+  - id: pay-a
+    name: Pay (A)
+    amount: 2400
+    schedule: {cadence: semimonthly, days: [1, 15], weekend: before}
+  - id: pay-b
+    name: Pay (B)
+    amount: 1500
+    # Day 31 means "the last day of the month" (30th, or 28th/29th in February).
+    schedule: {cadence: monthly, day: 31, weekend: before}
+    # A biweekly payday needs a real start date so the app knows which weeks, e.g.
+    # schedule: {cadence: biweekly, start: 2029-01-12}
+
+# Bills: money out with a due date. status = autopay | manual | none (not scheduled yet).
+bills:
+  - id: mortgage
+    name: Mortgage
+    amount: 1800
+    schedule: {cadence: monthly, day: 3}
+    status: autopay
+    group: Home
+  - id: electric
+    name: Electric
+    amount: 150
+    schedule: {cadence: monthly, day: 6}
+    status: manual
+    group: Utilities
+  - id: internet
+    name: Internet
+    amount: 80
+    schedule: {cadence: monthly, day: 12}
+    status: autopay
+    group: Utilities
+  - id: car-loan-payment
+    name: Car loan
+    amount: 350
+    schedule: {cadence: monthly, day: 10}
+    # Due on the 10th but paid from the next paycheck of Pay (A), on the 15th: listed after that payday.
+    funded_by: pay-a
+    group: Debt payments
+  - id: card-payment
+    name: Rewards card payment
+    amount: 400
+    schedule: {cadence: monthly, day: 25}
+    status: autopay
+    card: rewards-card       # the payment of the card itself is card-funded too
+    group: Debt payments
+  - id: appliance-payment
+    name: Appliance store financing
+    amount: 125
+    schedule: {cadence: monthly, day: 28}  # in February this becomes the 28th; day 31 would become the month end
+    group: Debt payments
+  - id: lawn-care
+    name: Lawn care
+    amount: 120
+    schedule: {cadence: monthly, day: 14}
+    seasonal: {"5-9": 120, "10-4": 40}     # $120 May to September, $40 October to April
+    card: rewards-card
+    group: Home
+  - id: car-insurance
+    name: Car insurance (yearly)
+    amount: 600
+    schedule: {cadence: yearly, month: 9, day: 1}
+    group: Insurance
+  - id: holidays
+    name: Holiday gifts
+    amount: 500
+    schedule: {cadence: yearly, month: 12, day: 1}
+    card: rewards-card
+    group: Family
+
+# Spending lines: budgeted amounts without a bill (no status). Paid with the rewards card here.
+spending:
+  - id: grocery
+    name: Grocery
+    amount: 160
+    schedule: {cadence: weekly, weekday: saturday}
+    card: rewards-card
+    group: Food & everyday
+  - id: fuel
+    name: Fuel
+    amount: 50
+    schedule: {cadence: weekly, weekday: saturday}
+    cycle: [50, 35]          # alternating weeks: a full tank, then a top-up
+    card: rewards-card
+    group: Food & everyday
+
+# Payee rules match bank descriptions to budget rows. First match wins, so order matters.
+#   bill  - clears one bill row when the amount is within tolerance (otherwise it becomes a proposal)
+#   pay   - clears one income row whatever the amount
+#   ask   - always a proposal (e.g. two bills from the same company)
+#   card  - a credit-card payment: proposes the card-funded rows it covers
+#   track - counted in reports and caps, no budget row
+#   ignore, savings_draw (money moved in from savings), loan_in (a loan paid into checking)
+payee_rules:
+  - id: payroll-a
+    name: Pay A
+    kind: pay
+    contains: ["EMPLOYER A PAYROLL"]
+    direction: in
+    targets: [pay-a]
+  - id: payroll-b
+    name: Pay B
+    kind: pay
+    contains: ["EMPLOYER B PAYROLL"]
+    direction: in
+    targets: [pay-b]
+  - id: mortgage
+    name: Mortgage
+    kind: bill
+    contains: ["HOME LOAN SERVICER"]
+    targets: [mortgage]
+  - id: electric
+    name: Electric
+    kind: bill
+    contains: ["ELECTRIC CO"]
+    targets: [electric]
+  - id: internet
+    name: Internet
+    kind: bill
+    contains: ["INTERNET PROVIDER"]
+    targets: [internet]
+  - id: car-loan
+    name: Car loan
+    kind: bill
+    contains: ["AUTO LOAN"]
+    targets: [car-loan-payment]
+  - id: appliance
+    name: Appliance financing
+    kind: ask                # ask: the user confirms each time
+    contains: ["APPLIANCE FINANCE"]
+    targets: [appliance-payment]
+    note: promo balance, check the amount
+  - id: rewards-card
+    name: Rewards card payment
+    kind: card
+    contains: ["TRANSFER TO CARD 1234"]
+    card: rewards-card
+  - id: from-savings
+    name: From savings
+    kind: savings_draw
+    contains: ["TRANSFER FROM SAVINGS"]
+    direction: in
+  - id: online-shopping
+    name: Online shopping
+    kind: track
+    contains: ["ONLINE MARKETPLACE"]
+    direction: out
+  - id: interest
+    name: Interest
+    kind: track
+    contains: ["INTEREST PAID"]
+    direction: in
+
+alerts:
+  cushion: 300               # warn when the forecast low drops below $300
+  bill_variance_pct: 10      # flag a bill that posted more than 10% away from its row
+  unscheduled_days: 7        # bills due within 7 days that are not scheduled yet
+  expected_grace_days: 3
+  income:
+    - series: pay-b
+      min_avg_pct: 85        # average of the last 4 deposits below 85% of the budget
+      window: 4
+  caps:
+    - id: online-weekly
+      name: Online shopping
+      rules: [online-shopping]
+      period: week
+      amount: 50
+
+# Credit-card spending categories for the Card tab (first keyword match wins).
+card_categories:
+  - name: Grocery
+    keywords: [GROCERY, SUPERMARKET, MARKET, FOODS]
+    weekly_series: [grocery]
+  - name: Fuel
+    keywords: [FUEL, GAS STATION, PETROL]
+    weekly_series: [fuel]
+  - name: Eating out
+    keywords: [RESTAURANT, CAFE, COFFEE, PIZZA, GRILL, DINER, TAKEOUT]
+    bank_categories: ["Food & Dining"]
+  - name: Lawn care
+    keywords: [LAWN]
+    has_own_rows: true       # has its own budget rows, so it is left out of "Other"
+
+# Groups for the Report tab (Sankey). Colours are theme tokens or #rrggbb.
+flow_groups:
+  - name: Home
+    colour: "--f-home"
+    rules: [mortgage]
+    series: [mortgage, lawn-care]
+  - name: Debt payments
+    colour: "--f-debt"
+    rules: [car-loan, appliance]
+    series: [car-loan-payment, card-payment, appliance-payment]
+  - name: Utilities
+    colour: "--f-util"
+    rules: [electric, internet]
+    series: [electric, internet]
+  - name: Insurance
+    colour: "--f-ins"
+    series: [car-insurance]
+  - name: Food & everyday
+    colour: "--f-food"
+    rules: [online-shopping]
+    series: [grocery, fuel]
+  - name: Family
+    colour: "--f-family"
+    series: [holidays]
+  - name: Card
+    colour: "--f-card"
+    rules: [rewards-card]

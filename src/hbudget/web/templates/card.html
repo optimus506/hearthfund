@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-cs">
+  <div class="section-head"><h2 id="h-cs">Card spending by week</h2>
+    <div class="seg" role="group" aria-label="Which purchases">
+      <button type="button" data-win="all" data-v="active" aria-pressed="true">All history</button>
+      <button type="button" data-win="recent" data-v="active" aria-pressed="false">Last 2 months</button>
+    </div>
+  </div>
+  <div id="cardSpend"></div>
+</section>
+<section class="card" aria-labelledby="h-st">
+  <div class="section-head"><h2 id="h-st">Stores</h2>
+    <div class="field"><label for="stCat">Category</label><select id="stCat"></select></div>
+  </div>
+  <p class="muted small">Moving a store sends all its purchases there, now and in later uploads. Open a store's purchases to move just one; a purchase moved by hand stays put when the keywords change.</p>
+  <p class="msg" id="stMsg" role="status" aria-live="polite" hidden></p>
+  <div id="stores"></div>
+</section>
+<section class="card" aria-labelledby="h-cat">
+  <h2 id="h-cat">Categories</h2>
+  <p class="muted small">A card purchase goes to the first category whose keyword appears in its description. Keywords are plain words, not patterns.</p>
+  <div id="cats"></div>
+  <form class="form" id="catAdd">
+    <div class="field"><label for="catName">New category</label><input id="catName" type="text" maxlength="40"></div>
+    <div class="field"><label for="catKw">Keywords</label><input id="catKw" type="text" placeholder="GROCERY, MARKET"></div>
+    <div class="field"><button class="btn" type="submit">Add</button></div>
+  </form>
+  <div><button class="btn primary" id="catSave" type="button">Save categories</button></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/card.js"></script>{% endblock %}

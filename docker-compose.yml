@@ -1,0 +1,70 @@
+# Hearthfund: `docker compose up -d`, then open http://127.0.0.1:8080
+# Runs the released image from GitHub's container registry; upgrade with scripts/upgrade.sh (or
+# `docker compose pull && docker compose up -d`). To build from this folder instead, see compose.build.yml.
+# Data lives in ./data on the host (the database, its secret key and backups). Back it up.
+name: hearthfund
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  # Keep container logs bounded (Docker's default never rotates): at most 3 x 10 MB per container.
+  logging:
+    driver: local
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # One-shot: makes ./data owned by the app user (Docker creates a missing ./data as root).
+  # Runs as root with only the CHOWN and FOWNER capabilities and no network; it touches the
+  # ./data folder itself, never the files inside, and exits. The app never runs as root.
+  init:
+    image: ${HBUDGET_IMAGE:-ghcr.io/optimus506/hearthfund:latest}
+    <<: *hardening
+    cap_add:
+      - CHOWN
+      - FOWNER
+    user: "0:0"
+    network_mode: none
+    environment:
+      HBUDGET_UID: ${HBUDGET_UID:-10001}
+      HBUDGET_GID: ${HBUDGET_GID:-10001}
+    # Refuses uid/gid 0: the app must not run as root.
+    entrypoint: ["python", "-c", "import os, sys; u, g = int(os.environ['HBUDGET_UID']), int(os.environ['HBUDGET_GID']); 0 in (u, g) and sys.exit('HBUDGET_UID and HBUDGET_GID must not be 0: the app does not run as root'); st = os.stat('/data'); (st.st_uid, st.st_gid) == (u, g) or os.chown('/data', u, g); os.chmod('/data', 0o700)"]
+    volumes:
+      - ./data:/data
+    restart: "no"
+
+  app:
+    # Pin a release in .env to upgrade only when you choose, e.g.
+    # HBUDGET_IMAGE=ghcr.io/optimus506/hearthfund:1.0.0
+    image: ${HBUDGET_IMAGE:-ghcr.io/optimus506/hearthfund:latest}
+    restart: unless-stopped
+    # Optional settings: copy .env.example to .env and edit it. Missing .env is fine.
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      # Localhost only by default. For access from other devices use a reverse proxy with HTTPS or
+      # Tailscale (see docs/DEPLOY.md), or, on a trusted home network only, set
+      # HBUDGET_BIND_ADDRESS=0.0.0.0 in .env (plain HTTP; Docker's port publishing bypasses
+      # host firewalls such as ufw). Never forward the port on your router.
+      - "${HBUDGET_BIND_ADDRESS:-127.0.0.1}:${HBUDGET_HOST_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data
+      # Optional HTTPS: put fullchain.pem and privkey.pem here and set HBUDGET_TLS_CERT /
+      # HBUDGET_TLS_KEY in .env (docs/DEPLOY.md, "HTTPS with your own certificate").
+      - ${HBUDGET_CERTS_DIR:-./certs}:/certs:ro
+    <<: *hardening
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    # Set HBUDGET_UID/HBUDGET_GID in .env to run as your own user instead (files in ./data are then yours).
+    user: "${HBUDGET_UID:-10001}:${HBUDGET_GID:-10001}"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    # Health: the image's own HEALTHCHECK (docker/healthcheck.py). Not repeated here, so an older image run
+    # with this file keeps the check it was built with.

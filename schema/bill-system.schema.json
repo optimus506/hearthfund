@@ -1,0 +1,1715 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://household-budget.invalid/schema/bill-system.schema.json",
+  "title": "Hearthfund bill system",
+  "description": "A household's budget setup (income, bills, spending lines, accounts, payee rules, alerts, card categories, report groups) and, optionally, a full backup of its ledger and history. Money is in currency units with at most two decimals; dates are ISO 8601 (YYYY-MM-DD). Amounts are magnitudes except in backup.ledger (ledger sign: + out, - in) and in transactions (bank sign: - out, + in).",
+  "type": "object",
+  "required": [
+    "format",
+    "version",
+    "household"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "format": {
+      "const": "household-budget/bill-system"
+    },
+    "version": {
+      "const": 1
+    },
+    "household": {
+      "$ref": "#/$defs/household"
+    },
+    "settings": {
+      "$ref": "#/$defs/settings"
+    },
+    "accounts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/account"
+      }
+    },
+    "income": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/series"
+      }
+    },
+    "bills": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/series"
+      }
+    },
+    "spending": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/series"
+      }
+    },
+    "payee_rules": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/payeeRule"
+      }
+    },
+    "alerts": {
+      "$ref": "#/$defs/alerts"
+    },
+    "card_categories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/cardCategory"
+      }
+    },
+    "flow_groups": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/flowGroup"
+      }
+    },
+    "goals": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "$ref": "#/$defs/goal"
+      }
+    },
+    "milestones": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "$ref": "#/$defs/milestone"
+      }
+    },
+    "not_recurring": {
+      "type": "array",
+      "maxItems": 500,
+      "description": "Payees the household marked \"not a subscription\" on the Subscriptions page",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "payee"
+        ],
+        "properties": {
+          "source": {
+            "enum": [
+              "bank",
+              "card"
+            ]
+          },
+          "payee": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      }
+    },
+    "alert_snoozes": {
+      "type": "array",
+      "maxItems": 500,
+      "description": "Repeating-payee alerts the household set aside on Home; each comes back when the payee posts in a later month",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "alert",
+          "payee",
+          "since"
+        ],
+        "properties": {
+          "alert": {
+            "enum": [
+              "unmatched_recurring",
+              "unbudgeted"
+            ]
+          },
+          "payee": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "since": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      }
+    },
+    "backup": {
+      "$ref": "#/$defs/backup"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+      "description": "Lower-case slug."
+    },
+    "rowId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "datetime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "money": {
+      "description": "Non-negative amount, at most two decimals: 1800, 1800.5 or \"1,800.50\". More than two decimals is rejected by the importer.",
+      "oneOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^\\$?\\d{1,3}(,?\\d{3})*(\\.\\d{1,2})?$"
+        }
+      ]
+    },
+    "signedMoney": {
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string",
+          "pattern": "^-?\\$?\\d{1,3}(,?\\d{3})*(\\.\\d{1,2})?$"
+        }
+      ]
+    },
+    "percent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000,
+      "description": "Percent, e.g. 10 or 29.99 (at most two decimals; checked by the importer, not the schema)."
+    },
+    "status": {
+      "enum": [
+        "autopay",
+        "manual",
+        "none"
+      ]
+    },
+    "colour": {
+      "type": "string",
+      "pattern": "^(#[0-9a-fA-F]{6}|--[a-z0-9-]{1,40})$"
+    },
+    "monthRange": {
+      "type": "string",
+      "pattern": "^(1[0-2]|[1-9])(-(1[0-2]|[1-9]))?(,(1[0-2]|[1-9])(-(1[0-2]|[1-9]))?)*$"
+    },
+    "household": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "default": "USD"
+        },
+        "start_balance": {
+          "$ref": "#/$defs/signedMoney",
+          "description": "Checkbook balance on as_of (can be negative).",
+          "default": 0
+        },
+        "as_of": {
+          "$ref": "#/$defs/date"
+        },
+        "last_reconciled_through": {
+          "$ref": "#/$defs/date"
+        },
+        "horizon": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "enum": [
+                "rolling",
+                "fixed"
+              ],
+              "default": "rolling"
+            },
+            "months": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60,
+              "default": 15
+            },
+            "end": {
+              "$ref": "#/$defs/date"
+            }
+          }
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "week_starts": {
+          "enum": [
+            "monday",
+            "sunday"
+          ],
+          "default": "monday"
+        },
+        "reconcile": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "days_before": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 90,
+              "default": 12
+            },
+            "days_after": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 90,
+              "default": 21
+            },
+            "tolerance_pct": {
+              "$ref": "#/$defs/percent",
+              "default": 10
+            },
+            "tolerance_abs": {
+              "$ref": "#/$defs/money",
+              "default": 25
+            }
+          }
+        },
+        "status_colours": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "autopay": {
+              "$ref": "#/$defs/colour"
+            },
+            "manual": {
+              "$ref": "#/$defs/colour"
+            }
+          }
+        },
+        "celebrate": {
+          "type": "boolean",
+          "default": true,
+          "description": "show wins on Home"
+        },
+        "card_transfers_on_payday": {
+          "type": "boolean",
+          "default": false,
+          "description": "the forecast takes card-funded bills and spending out of checking on the payday that opens their pay period, as one move per card"
+        }
+      }
+    },
+    "schedule": {
+      "type": "object",
+      "required": [
+        "cadence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "cadence": {
+          "enum": [
+            "once",
+            "weekly",
+            "biweekly",
+            "semimonthly",
+            "monthly",
+            "yearly"
+          ]
+        },
+        "start": {
+          "$ref": "#/$defs/date",
+          "description": "First occurrence (weekly, biweekly, once) or first month. Optional when the pattern is given by day/days/month/weekday: it then defaults to the household's as_of date (the first matching date on or after it)."
+        },
+        "end": {
+          "$ref": "#/$defs/date"
+        },
+        "interval": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 52,
+          "description": "weekly only: every N weeks"
+        },
+        "day": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31,
+          "description": "monthly / yearly: day of month, clamped to the month end"
+        },
+        "days": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 31
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "semimonthly: two days",
+          "uniqueItems": true
+        },
+        "month": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12,
+          "description": "yearly: month"
+        },
+        "weekend": {
+          "enum": [
+            "none",
+            "before",
+            "after"
+          ],
+          "default": "none",
+          "description": "Move a Saturday/Sunday date to the Friday before or the Monday after."
+        },
+        "weekday": {
+          "enum": [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday"
+          ],
+          "description": "weekly / biweekly without a start date: the first such weekday on or after as_of"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "cadence": {
+                "const": "semimonthly"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "days"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "cadence": {
+                "const": "yearly"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "month",
+              "day"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "cadence": {
+                "const": "once"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "start"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "cadence": {
+                "enum": [
+                  "weekly",
+                  "biweekly"
+                ]
+              }
+            }
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "start"
+                ]
+              },
+              {
+                "required": [
+                  "weekday"
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "cadence": {
+                "const": "monthly"
+              }
+            }
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "start"
+                ]
+              },
+              {
+                "required": [
+                  "day"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "series": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "amount",
+        "schedule"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "amount": {
+          "$ref": "#/$defs/money"
+        },
+        "schedule": {
+          "$ref": "#/$defs/schedule"
+        },
+        "status": {
+          "$ref": "#/$defs/status",
+          "description": "bills: default status of new rows"
+        },
+        "funded_by": {
+          "$ref": "#/$defs/id",
+          "description": "income id: rows are listed after the first payday on or after the due date"
+        },
+        "card": {
+          "$ref": "#/$defs/id",
+          "description": "credit-card account id that pays this line (card-funded)"
+        },
+        "debt": {
+          "$ref": "#/$defs/id",
+          "description": "debt account id this line's payments pay down (estimated balance on the Debts tab)"
+        },
+        "group": {
+          "$ref": "#/$defs/name",
+          "description": "flow group for the Report tab"
+        },
+        "seasonal": {
+          "type": "object",
+          "description": "Month ranges to amount, e.g. {\"5-9\": 120, \"10-4\": 40}. Ranges may wrap the year end.",
+          "propertyNames": {
+            "$ref": "#/$defs/monthRange"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/money"
+          }
+        },
+        "cycle": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/money"
+          },
+          "minItems": 1,
+          "maxItems": 53,
+          "description": "Repeating amounts by occurrence, e.g. [50, 35]"
+        },
+        "active": {
+          "type": "boolean",
+          "default": true
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "account": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "enum": [
+            "checking",
+            "savings",
+            "credit_card",
+            "loan",
+            "mortgage",
+            "retirement_loan",
+            "other"
+          ]
+        },
+        "balance": {
+          "$ref": "#/$defs/money",
+          "description": "Amount owed (debts) or held."
+        },
+        "apr": {
+          "$ref": "#/$defs/percent"
+        },
+        "payment": {
+          "$ref": "#/$defs/money",
+          "description": "What you actually pay each month."
+        },
+        "minimum": {
+          "$ref": "#/$defs/money"
+        },
+        "limit": {
+          "$ref": "#/$defs/money"
+        },
+        "as_of": {
+          "$ref": "#/$defs/date"
+        },
+        "promo_ends": {
+          "$ref": "#/$defs/date"
+        },
+        "apr_after": {
+          "$ref": "#/$defs/percent"
+        },
+        "deferred_interest": {
+          "type": "boolean",
+          "default": false
+        },
+        "is_mortgage": {
+          "type": "boolean",
+          "default": false
+        },
+        "include_in_payoff": {
+          "type": "boolean",
+          "default": true
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "history": {
+          "type": "array",
+          "maxItems": 120,
+          "description": "past balances, oldest first: [as of date, balance]",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "$ref": "#/$defs/date"
+              },
+              {
+                "$ref": "#/$defs/money"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      }
+    },
+    "payeeRule": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "enum": [
+            "bill",
+            "pay",
+            "ask",
+            "card",
+            "track",
+            "ignore",
+            "savings_draw",
+            "loan_in",
+            "allowance"
+          ],
+          "description": "bill: clears one row if within tolerance; pay: clears one income row whatever the amount; ask: always a proposal; card: proposes a bundle of card-funded rows; track: counted, no row; ignore: not counted; savings_draw / loan_in: money in shown as its own source; allowance: each payment uses up part of the month's row, the rest spills into the next row, and the leftover is offered once the month is over"
+        },
+        "contains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": "Case-insensitive text; any one matches."
+        },
+        "regex": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "direction": {
+          "enum": [
+            "in",
+            "out",
+            "any"
+          ],
+          "default": "any"
+        },
+        "min_amount": {
+          "$ref": "#/$defs/money"
+        },
+        "max_amount": {
+          "$ref": "#/$defs/money"
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/name"
+          },
+          "description": "Series ids or row names this rule clears."
+        },
+        "card": {
+          "$ref": "#/$defs/id"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 300
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "contains"
+          ]
+        },
+        {
+          "required": [
+            "regex"
+          ]
+        }
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "card"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "card"
+            ]
+          }
+        }
+      ]
+    },
+    "alerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cushion": {
+          "$ref": "#/$defs/money",
+          "default": 300
+        },
+        "bill_variance_pct": {
+          "$ref": "#/$defs/percent",
+          "default": 10
+        },
+        "unscheduled_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60,
+          "default": 7
+        },
+        "expected_grace_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60,
+          "default": 3
+        },
+        "unmatched_recurring": {
+          "type": "boolean",
+          "default": true
+        },
+        "income": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "series"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "series": {
+                "$ref": "#/$defs/id"
+              },
+              "min_avg_pct": {
+                "$ref": "#/$defs/percent",
+                "default": 85
+              },
+              "window": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 52,
+                "default": 4
+              },
+              "short_by": {
+                "$ref": "#/$defs/money"
+              }
+            }
+          }
+        },
+        "caps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "rules",
+              "period",
+              "amount"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "name": {
+                "$ref": "#/$defs/name"
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/id"
+                },
+                "minItems": 1
+              },
+              "period": {
+                "enum": [
+                  "week",
+                  "month"
+                ]
+              },
+              "amount": {
+                "$ref": "#/$defs/money"
+              }
+            }
+          }
+        }
+      }
+    },
+    "cardCategory": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        },
+        "bank_categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "weekly_series": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "has_own_rows": {
+          "type": "boolean",
+          "default": false
+        },
+        "merchants": {
+          "description": "Stores moved to this category by hand (the store name the app takes from a card description); tried before the keywords",
+          "type": "array",
+          "maxItems": 2000,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        }
+      }
+    },
+    "flowGroup": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "colour": {
+          "$ref": "#/$defs/colour"
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "row_names": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/name"
+          }
+        }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "required": [
+        "exported_at",
+        "app_version",
+        "ledger"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "exported_at": {
+          "$ref": "#/$defs/datetime"
+        },
+        "app_version": {
+          "type": "string",
+          "maxLength": 40
+        },
+        "ledger": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ledgerRow"
+          }
+        },
+        "expected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/expectedItem"
+          }
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 200000
+        },
+        "bank_transactions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bankTxn"
+          }
+        },
+        "card_transactions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cardTxn"
+          }
+        },
+        "uploads": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/upload"
+          }
+        },
+        "mapping_profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mappingProfile"
+          }
+        },
+        "reconciliations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reconciliation"
+          }
+        },
+        "audit": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/auditEntry"
+          }
+        },
+        "members": {
+          "type": "array",
+          "description": "Usernames and roles only. Passwords are never exported.",
+          "items": {
+            "type": "object",
+            "required": [
+              "username",
+              "role"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "username": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              "role": {
+                "enum": [
+                  "owner",
+                  "editor",
+                  "contributor",
+                  "viewer"
+                ]
+              }
+            }
+          }
+        },
+        "series_state": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/id"
+              },
+              "generated_through": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/date"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "description": "Generation watermark per series."
+        },
+        "upload_links": {
+          "type": "array",
+          "description": "Every upload's full transaction set in its own file order.",
+          "items": {
+            "type": "object",
+            "required": [
+              "upload",
+              "txn",
+              "file_index"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "balance": {
+                "description": "The running balance this upload's file gave the transaction (two exports of the same postings can differ).",
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/signedMoney"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "category": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "upload": {
+                "$ref": "#/$defs/rowId"
+              },
+              "txn": {
+                "$ref": "#/$defs/rowId"
+              },
+              "file_index": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "ledgerRow": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "amount",
+        "due",
+        "order_date",
+        "seq",
+        "state"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/rowId"
+        },
+        "series": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "enum": [
+            "income",
+            "bill",
+            "spending"
+          ]
+        },
+        "amount": {
+          "$ref": "#/$defs/signedMoney",
+          "description": "Ledger sign: + out, - in."
+        },
+        "due": {
+          "$ref": "#/$defs/date"
+        },
+        "order_date": {
+          "$ref": "#/$defs/date"
+        },
+        "seq": {
+          "type": "integer"
+        },
+        "state": {
+          "enum": [
+            "open",
+            "cleared",
+            "removed"
+          ]
+        },
+        "status": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/status"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-row override; null = the series default."
+        },
+        "amount_was": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/signedMoney"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "overridden": {
+          "type": "boolean"
+        },
+        "cleared_txn": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/rowId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cleared_on": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "card": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/id"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Card-funded by this credit-card account."
+        },
+        "paid": {
+          "$ref": "#/$defs/money",
+          "description": "Partial payments already taken off amount (reduce)."
+        },
+        "paid_txns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rowId"
+          }
+        },
+        "paid_at_change": {
+          "$ref": "#/$defs/money"
+        },
+        "nominal": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Occurrence date before the weekend shift (series rows); with series it identifies the occurrence."
+        }
+      }
+    },
+    "expectedItem": {
+      "type": "object",
+      "required": [
+        "id",
+        "label",
+        "amount",
+        "direction",
+        "date"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/rowId"
+        },
+        "label": {
+          "$ref": "#/$defs/name"
+        },
+        "amount": {
+          "$ref": "#/$defs/money"
+        },
+        "direction": {
+          "enum": [
+            "in",
+            "out"
+          ]
+        },
+        "date": {
+          "$ref": "#/$defs/date"
+        },
+        "status": {
+          "enum": [
+            "open",
+            "done"
+          ],
+          "default": "open"
+        }
+      }
+    },
+    "bankTxn": {
+      "type": "object",
+      "required": [
+        "id",
+        "posted",
+        "amount",
+        "description"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/rowId"
+        },
+        "upload": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/rowId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The first upload that contained this transaction."
+        },
+        "posted": {
+          "$ref": "#/$defs/date"
+        },
+        "effective": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "amount": {
+          "$ref": "#/$defs/signedMoney",
+          "description": "Bank sign: - out, + in."
+        },
+        "balance": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/signedMoney"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Masked: runs of 5+ digits hidden except the last 4."
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "file_index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "cardTxn": {
+      "type": "object",
+      "required": [
+        "id",
+        "purchased",
+        "posted",
+        "amount",
+        "description",
+        "category"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/rowId"
+        },
+        "upload": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/rowId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The first upload that contained this transaction."
+        },
+        "purchased": {
+          "$ref": "#/$defs/date"
+        },
+        "posted": {
+          "$ref": "#/$defs/date"
+        },
+        "amount": {
+          "$ref": "#/$defs/signedMoney"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "by_hand": {
+          "description": "The purchase was moved to its category by hand; re-sorting by keywords leaves it alone",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "upload": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "uploaded_at",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/rowId"
+        },
+        "kind": {
+          "enum": [
+            "bank",
+            "card"
+          ]
+        },
+        "filename": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]{0,80}$"
+        },
+        "uploaded_at": {
+          "$ref": "#/$defs/datetime"
+        },
+        "uploaded_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "from": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "to": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/date"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latest_balance": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/signedMoney"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "has_balance": {
+          "type": "boolean"
+        },
+        "hidden": {
+          "type": "boolean",
+          "default": false,
+          "description": "Removed from the uploads list but kept in the history (D-028)."
+        },
+        "status": {
+          "enum": [
+            "waiting",
+            "imported",
+            "rejected"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "mappingProfile": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "mapping"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/rowId"
+        },
+        "name": {
+          "$ref": "#/$defs/name"
+        },
+        "kind": {
+          "enum": [
+            "bank",
+            "card",
+            "workbook"
+          ]
+        },
+        "mapping": {
+          "type": "object",
+          "description": "BankMapping or WorkbookMapping fields (docs/ARCHITECTURE.md 12.3, 12.4)."
+        },
+        "header": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "maxItems": 200
+        }
+      }
+    },
+    "reconciliation": {
+      "type": "object",
+      "required": [
+        "id",
+        "at",
+        "through",
+        "new_balance"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/rowId"
+        },
+        "at": {
+          "$ref": "#/$defs/datetime"
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "upload": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/rowId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "through": {
+          "$ref": "#/$defs/date"
+        },
+        "new_balance": {
+          "$ref": "#/$defs/signedMoney"
+        },
+        "cleared": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "row",
+              "txn",
+              "how"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "row": {
+                "$ref": "#/$defs/rowId"
+              },
+              "txn": {
+                "$ref": "#/$defs/rowId"
+              },
+              "how": {
+                "type": "string",
+                "maxLength": 40
+              }
+            }
+          }
+        },
+        "accepted": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "report": {
+          "type": "string",
+          "maxLength": 500000
+        }
+      }
+    },
+    "auditEntry": {
+      "type": "object",
+      "required": [
+        "at",
+        "action"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "$ref": "#/$defs/datetime"
+        },
+        "by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "action": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "row": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "detail": {
+          "type": "object"
+        },
+        "imported": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "goal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "kind"
+      ],
+      "description": "Something the household is working towards; progress only, the app moves no money",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "kind": {
+          "enum": [
+            "emergency",
+            "savings",
+            "debt_free"
+          ],
+          "description": "emergency: months of bills; savings: an amount; debt_free: every debt in the payoff plan paid"
+        },
+        "target": {
+          "$ref": "#/$defs/money"
+        },
+        "months": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 24
+        },
+        "saved": {
+          "$ref": "#/$defs/money"
+        },
+        "by": {
+          "$ref": "#/$defs/date"
+        },
+        "start_debt": {
+          "$ref": "#/$defs/money"
+        }
+      }
+    },
+    "milestone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "kind",
+        "text",
+        "on"
+      ],
+      "description": "A win already shown (celebrated once), oldest first",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "kind": {
+          "enum": [
+            "debt_paid",
+            "goal_reached",
+            "above_cushion",
+            "under_budget"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "on": {
+          "$ref": "#/$defs/date"
+        }
+      }
+    }
+  }
+}

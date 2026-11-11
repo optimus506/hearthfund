@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-2fa">
+  <h2 id="h-2fa">Two-factor sign-in</h2>
+  {% if error %}<p class="msg err" role="alert">{{ error }}</p>{% endif %}
+  {% if notice %}<p class="msg ok" role="status">{{ notice }}</p>{% endif %}
+  {% if codes %}
+  <h3>Your recovery codes</h3>
+  <p><b>Write these down or print them now. They are shown only this once.</b> Each code signs you in one time when you do not have your phone. Keep them somewhere safe that is not this computer.</p>
+  <pre class="codes" id="recoveryCodes">
+{% for c in codes %}{{ c }}
+{% endfor %}</pre>
+  {% endif %}
+  {% if state.enabled %}
+  <p>On since {{ state.enabled_at[:10] }}. Signing in asks for your password and then a code from your authenticator app. Recovery codes left: <b>{{ state.codes_left }}</b>.</p>
+  <h3>New recovery codes</h3>
+  <form method="post" action="/account/2fa/codes" class="field">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label for="codeNew">Code from your authenticator app</label><input id="codeNew" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="40">
+    <div><button class="btn" type="submit">Make new recovery codes</button></div>
+  </form>
+  <p class="muted small">The old codes stop working.</p>
+  {% if required %}<p class="muted small">This server requires two-factor sign-in, so it cannot be turned off here.</p>
+  {% else %}
+  <h3>Turn off</h3>
+  <form method="post" action="/account/2fa/off" class="field">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label for="offPass">Password</label><input id="offPass" name="password" type="password" autocomplete="current-password" required maxlength="256">
+    <label for="offCode">Code from your authenticator app, or a recovery code</label><input id="offCode" name="code" autocomplete="one-time-code" required maxlength="40">
+    <div><button class="btn danger" type="submit">Turn off two-factor sign-in</button></div>
+  </form>
+  {% endif %}
+  {% elif state.pending_secret %}
+  <ol>
+    <li>Open an authenticator app on your phone (any app that does time-based codes, "TOTP").</li>
+    <li>{% if qr_svg %}Scan this code, or type the key into the app by hand.{% else %}Type this key into the app by hand (choose "time-based").{% endif %}</li>
+    <li>Enter the 6 digits the app shows to finish, within {{ minutes }} minutes and in this browser.</li>
+  </ol>
+  {% if qr_svg %}<div class="qr">{{ qr_svg|safe }}</div>{% endif %}
+  <p>Key: <code id="totpKey">{{ secret }}</code></p>
+  <p class="small"><a href="{{ link }}">Open in an authenticator app on this device</a></p>
+  <form method="post" action="/account/2fa/confirm" class="field">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label for="code">The 6 digits from the app</label><input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="40" autofocus>
+    <div><button class="btn primary" type="submit">Turn on two-factor sign-in</button></div>
+  </form>
+  <form method="post" action="/account/2fa/cancel" class="field">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <div><button class="btn" type="submit">Cancel</button></div>
+  </form>
+  {% else %}
+  {% if required %}<p class="msg" role="status">This server requires two-factor sign-in. Set it up to continue.</p>{% endif %}
+  <p>Off. With it on, signing in asks for your password and then a 6-digit code from an authenticator app on your phone, so a stolen password is not enough. Turn it on if the app can be reached from outside your home.</p>
+  <form method="post" action="/account/2fa/start" class="field">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label for="startPass">Your password</label><input id="startPass" name="password" type="password" autocomplete="current-password" required maxlength="256">
+    <div><button class="btn primary" type="submit">Set up two-factor sign-in</button></div>
+  </form>
+  {% endif %}
+  <p class="muted small">Lost your phone and your recovery codes? The admin can reset two-factor sign-in on the Admin page, or on the server: <code>hbudget disable-2fa USERNAME</code>. Access tokens for the API are separate and keep working.</p>
+  <p class="small"><a href="/account">Back to Account</a></p>
+</section>
+{% endblock %}

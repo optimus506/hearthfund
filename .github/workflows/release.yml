@@ -1,0 +1,73 @@
+name: Release
+
+# Push a tag vX.Y.Z (docs/RELEASING.md). Every CI check runs first; then the image is built for amd64 and arm64
+# and pushed to ghcr.io/<owner>/hearthfund as X.Y.Z, X.Y and latest, with an SBOM and build provenance,
+# and a GitHub release is made from the CHANGELOG.md section of that version.
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+    with:
+      e2e: true           # the browser smoke test: the only check of the JavaScript
+
+  publish:
+    name: Publish the image and the release
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write     # the GitHub release
+      packages: write     # push to ghcr.io
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tag, the app version and the changelog agree
+        id: version
+        run: |
+          v=$(python3 -c "import re; print(re.search(r\"__version__ = '([^']+)'\", open('src/hbudget/__init__.py').read()).group(1))")
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match __version__ $v (src/hbudget/__init__.py)"; exit 1
+          fi
+          python3 scripts/release.py notes "$v" > "$RUNNER_TEMP/notes.md"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/hearthfund
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          # `latest` follows the newest release tag (metadata-action's default for semver tags)
+      - name: Build and push linux/amd64 + linux/arm64
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag

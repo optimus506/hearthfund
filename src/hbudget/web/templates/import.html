@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-bs">
+  <h2 id="h-bs">Import a bill system</h2>
+  <p class="muted small">A YAML or JSON file in the bill-system format (see <code>examples/bill-system.example.yaml</code>), a full backup, or a simple CSV of bills (name, amount, cadence, day).
+  A bill system replaces or merges only the bills; the bank history stays. <b>Restoring a full backup replaces everything in this household, including its bank and card history, uploads and past reconciliations.</b></p>
+  <form class="form" id="bsForm">
+    <div class="field"><label for="bsFile">File</label><input id="bsFile" type="file" accept=".yaml,.yml,.json,.csv"></div>
+    <div class="field"><label for="bsMode">Mode</label><select id="bsMode"><option value="merge">Merge with what is here</option><option value="replace">Replace everything</option></select></div>
+    <div class="field"><label for="bsDry"><input id="bsDry" type="checkbox" checked> Dry run first</label></div>
+    <div class="field"><label for="bsBalance"><input id="bsBalance" type="checkbox"> Also set the checkbook balance from the file</label></div>
+    <div class="field"><label for="bsConfirm">For a backup: type the household name to confirm</label><input id="bsConfirm" type="text" autocomplete="off"></div>
+    <div class="field"><button class="btn primary" type="submit">Import</button></div>
+  </form>
+  <div id="bsResult"></div>
+</section>
+<section class="card" aria-labelledby="h-wb">
+  <h2 id="h-wb">Import a spreadsheet</h2>
+  <p class="muted small">An .ods, .xlsx or .csv checkbook: one row per bill or payday with a name, an amount and a date. You pick the columns in the next step. This replaces the rows of this household.</p>
+  <form class="form" id="wbForm">
+    <div class="field"><label for="wbFile">File</label><input id="wbFile" type="file" accept=".ods,.xlsx,.csv"></div>
+    <div class="field"><button class="btn primary" type="submit">Read the file</button></div>
+  </form>
+  <div class="card" id="wbMap" hidden></div>
+  <div id="wbResult"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/importer.js"></script>{% endblock %}

@@ -1,0 +1,174 @@
+# Starter payee rules for a household in the United States.
+#
+# Add them on the Rules page ("Starter rules"), or with `hbudget rule-pack --write`. To change the pack first,
+# save this file, edit it and add your copy instead (Rules page: "Add rules from a file", or
+# `hbudget rule-pack my-rules.yaml --write`). After adding, every rule is an ordinary rule: edit, reorder or
+# delete it on the Rules page.
+#
+# What adding a pack does:
+#   - A rule whose id the household already has is left alone, so adding a pack twice changes nothing and
+#     never undoes your edits.
+#   - `pay` rules are linked to every paycheck of the household. With no paycheck yet, they are skipped.
+#   - `bill` rules are linked to the household's bills whose name contains one of the `bills_named` words
+#     ("Electric", "Electric bill" and "City electric" all match `electric`). A bill that already has a rule
+#     keeps it; with no such bill, the rule is skipped. Add the bill and add the pack again.
+#   - `track` rules need no bill: the spending is counted in reports under `group`. With `card_category`,
+#     the same words also sort card purchases into that category on the Card page.
+#   - The rules go to the end of the list, and rules you add later go above them: the first rule that
+#     matches wins, so your own rules always come first.
+#
+# Words are matched anywhere in the bank's description, ignoring case. The names below are large national
+# companies, listed because they are common; they were not taken from anyone's bank data. Remove the ones
+# you do not use and add your own.
+format: household-budget/rule-pack
+version: 1
+name: Starter rules (United States)
+
+rules:
+  # ---- income
+  - id: starter-paycheck
+    name: Paycheck
+    kind: pay
+    direction: in
+    contains: [PAYROLL, DIRECT DEP, DIR DEP, SALARY]
+
+  # ---- bills (linked to your bills by name)
+  - id: starter-mortgage
+    name: Mortgage
+    kind: bill
+    contains: [MORTGAGE, HOME LOAN, MTG PMT, MTG PAYMENT]
+    bills_named: [mortgage, home loan]
+  - id: starter-rent
+    name: Rent
+    kind: bill
+    regex: '\bRENT\b|APARTMENTS|PROPERTY (MGMT|MANAGEMENT)'   # a pattern, so "CURRENT" does not count as rent
+    bills_named: [rent]
+  - id: starter-electric
+    name: Electric
+    kind: bill
+    contains: [ELECTRIC, ENERGY, POWER CO, POWER & LIGHT]
+    bills_named: [electric, electricity, power, energy]
+  - id: starter-natural-gas
+    name: Natural gas
+    kind: bill
+    contains: [NATURAL GAS, GAS CO, GAS UTIL, GAS SERVICE]
+    bills_named: [natural gas, gas bill, heating]
+  - id: starter-water
+    name: Water and sewer
+    kind: bill
+    contains: [WATER DEPT, WATER UTIL, WATER BILL, CITY WATER, WATER & SEWER, WATER AND SEWER, SEWER]
+    bills_named: [water, sewer]
+  - id: starter-trash
+    name: Trash
+    kind: bill
+    contains: [WASTE MANAGEMENT, WASTE MGMT, REPUBLIC SERVICES, SANITATION, DISPOSAL]
+    bills_named: [trash, garbage, waste]
+  - id: starter-internet
+    name: Internet
+    kind: bill
+    contains: [COMCAST, XFINITY, SPECTRUM, COX COMM, FRONTIER COMM, CENTURYLINK, GOOGLE FIBER, STARLINK]
+    bills_named: [internet, broadband, cable, wifi]
+  - id: starter-phone
+    name: Phone
+    kind: bill
+    contains: [VERIZON, T-MOBILE, TMOBILE, "AT&T", MINT MOBILE, CRICKET WIRELESS, US CELLULAR, WIRELESS]
+    bills_named: [phone, mobile, cell, wireless]
+  - id: starter-car-insurance
+    name: Car insurance
+    kind: bill
+    contains: [GEICO, PROGRESSIVE, STATE FARM, ALLSTATE, USAA, LIBERTY MUTUAL, FARMERS INS, NATIONWIDE]
+    bills_named: [car insurance, auto insurance]
+  - id: starter-car-loan
+    name: Car loan
+    kind: bill
+    contains: [AUTO LOAN, AUTO FINANCE, AUTO FIN, MOTOR CREDIT, MOTOR FINANCE]
+    bills_named: [car loan, auto loan, car payment]
+  - id: starter-student-loan
+    name: Student loan
+    kind: bill
+    contains: [STUDENT LOAN, STUDENT LN, NELNET, MOHELA, AIDVANTAGE, EDFINANCIAL, DEPT EDUCATION]
+    bills_named: [student loan]
+  - id: starter-childcare
+    name: Childcare
+    kind: bill
+    contains: [DAYCARE, DAY CARE, CHILD CARE, CHILDCARE, PRESCHOOL]
+    bills_named: [childcare, child care, daycare, day care, preschool]
+
+  # ---- spending to track (no bill needed). More specific rules first: the first match wins.
+  - id: starter-streaming
+    name: Streaming and subscriptions
+    kind: track
+    direction: out
+    contains: [NETFLIX, HULU, DISNEY PLUS, DISNEYPLUS, SPOTIFY, HBO, PEACOCK, PARAMOUNT+, YOUTUBE, PRIME VIDEO,
+               AMAZON PRIME, AUDIBLE, APPLE.COM/BILL]
+    group: Subscriptions
+    card_category: Subscriptions
+  - id: starter-eating-out
+    name: Eating out
+    kind: track
+    direction: out
+    contains: [MCDONALD, STARBUCKS, CHICK-FIL-A, TACO BELL, WENDY'S, BURGER KING, CHIPOTLE, DUNKIN, DOMINO'S,
+               PANERA, DOORDASH, UBER EATS, GRUBHUB, RESTAURANT, PIZZA, CAFE, COFFEE, GRILL, DINER]
+    group: Food & everyday
+    card_category: Eating out
+  - id: starter-groceries
+    name: Groceries
+    kind: track
+    direction: out
+    contains: [KROGER, SAFEWAY, PUBLIX, ALDI, TRADER JOE, WHOLE FOODS, WHOLEFDS, H-E-B, MEIJER, FOOD LION,
+               WEGMANS, ALBERTSONS, STOP & SHOP, SPROUTS, WINCO, HY-VEE, GROCERY, SUPERMARKET]
+    group: Food & everyday
+    card_category: Grocery
+  - id: starter-fuel
+    name: Fuel
+    kind: track
+    direction: out
+    contains: [EXXON, CHEVRON, SHELL OIL, SUNOCO, SPEEDWAY, CIRCLE K, WAWA, SHEETZ, QUIKTRIP, CASEY'S, VALERO,
+               PHILLIPS 66, CONOCO, MURPHY USA, RACETRAC, MARATHON PETRO, FUEL, GAS STATION]
+    group: Food & everyday
+    card_category: Fuel
+  - id: starter-home-improvement
+    name: Home and hardware
+    kind: track
+    direction: out
+    contains: [HOME DEPOT, LOWE'S, LOWES, ACE HARDWARE, MENARDS, HARBOR FREIGHT, HARDWARE]
+    group: Home
+    card_category: Home and hardware
+  - id: starter-shopping
+    name: Shopping
+    kind: track
+    direction: out
+    contains: [WALMART, WAL-MART, TARGET, COSTCO, SAM'S CLUB, SAMSCLUB, DOLLAR GENERAL, DOLLAR TREE, AMAZON, AMZN,
+               EBAY, ETSY, BEST BUY]
+    group: Shopping
+    card_category: Shopping
+  - id: starter-health
+    name: Pharmacy and health
+    kind: track
+    direction: out
+    contains: [CVS, WALGREENS, RITE AID, PHARMACY, DENTAL, MEDICAL, CLINIC, URGENT CARE]
+    group: Health
+    card_category: Health
+  - id: starter-getting-around
+    name: Rides, parking and tolls
+    kind: track
+    direction: out
+    contains: [UBER, LYFT, PARKING, TOLL, TRANSIT]
+    group: Getting around
+  - id: starter-cash
+    name: Cash withdrawals
+    kind: track
+    direction: out
+    contains: [ATM WITHDRAWAL, ATM W/D, CASH WITHDRAWAL]
+    group: Cash
+  - id: starter-bank-fees
+    name: Bank fees
+    kind: track
+    direction: out
+    contains: [OVERDRAFT, SERVICE FEE, MAINTENANCE FEE, ATM FEE]
+    group: Bank fees
+
+# Colours for report groups the household does not have yet (theme tokens or #rrggbb).
+groups:
+  Home: "--f-home"
+  Food & everyday: "--f-food"

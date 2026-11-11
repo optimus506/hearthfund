@@ -1,0 +1,18 @@
+# Synthetic multi-year household: the low goes below zero; year ends over three years.
+# Expected numbers are in tests/core/test_synthetic_regression.py.
+format: household-budget/bill-system
+version: 1
+
+household:
+  name: Multi-year household
+  currency: USD
+  start_balance: 100
+  as_of: 2029-11-01
+  horizon: {mode: fixed, end: 2031-02-28}
+
+income:
+  - {id: pay, name: Pay, amount: 2000, schedule: {cadence: monthly, start: 2029-11-01, day: 1}}
+
+bills:
+  - {id: rent, name: Rent, amount: 1900, schedule: {cadence: monthly, start: 2029-11-01, day: 2}}
+  - {id: holidays, name: Holiday gifts, amount: 450, schedule: {cadence: yearly, start: 2029-11-01, month: 12, day: 10}}

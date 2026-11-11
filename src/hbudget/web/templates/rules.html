@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-rules">
+  <h2 id="h-rules">Payee rules</h2>
+  <p class="muted small">Rules link bank descriptions to budget lines. The first rule that matches wins, so order matters. Words are matched anywhere in the description, ignoring case. Alerts and matching tolerances are under <a href="settings">Settings</a>.</p>
+  <div id="ruleList"></div>
+  <form class="form" id="ruleForm">
+    <input type="hidden" id="rId">
+    <div class="field"><label for="rName">Name</label><input id="rName" type="text" maxlength="60"></div>
+    <div class="field"><label for="rKind">Kind</label><select id="rKind">
+      <option value="bill">Bill (clears one row)</option><option value="pay">Pay (clears an income row)</option><option value="ask">Ask me (always a proposal)</option>
+      <option value="card">Card payment (bundle of card-paid rows)</option><option value="track">Track only</option><option value="ignore">Ignore</option>
+      <option value="savings_draw">From savings</option><option value="loan_in">Loan paid in</option>
+      <option value="allowance">Allowance (several payments a month)</option></select></div>
+    <div class="field"><label for="rContains">Description contains (comma separated)</label><input id="rContains" type="text" placeholder="ELECTRIC CO"></div>
+    <div class="field"><label for="rRegex">…or a pattern (advanced)</label><input id="rRegex" type="text" maxlength="200"></div>
+    <div class="field"><label for="rDir">Money</label><select id="rDir"><option value="any">In or out</option><option value="out">Out</option><option value="in">In</option></select></div>
+    <div class="field"><label for="rMin">From amount</label><input id="rMin" type="text" inputmode="decimal"></div>
+    <div class="field"><label for="rMax">Up to amount</label><input id="rMax" type="text" inputmode="decimal"></div>
+    <div class="field"><label for="rTargets">Clears these lines</label><select id="rTargets" multiple size="4"></select></div>
+    <div class="field"><label for="rCard">Card (for card payments)</label><input id="rCard" type="text" maxlength="40"></div>
+    <div class="field"><label for="rNote">Note</label><input id="rNote" type="text" maxlength="200"></div>
+    <div class="field"><button class="btn primary" id="rSave" type="submit">Add rule</button></div>
+  </form>
+  <form class="form" id="testForm">
+    <div class="field"><label for="tDesc">Test a description</label><input id="tDesc" type="text" maxlength="500"></div>
+    <div class="field"><label for="tAmount">Amount (negative = money out)</label><input id="tAmount" type="text" inputmode="decimal" placeholder="-150.00"></div>
+    <div class="field"><button class="btn" type="submit">Test</button></div>
+  </form>
+  <div id="testResult"></div>
+</section>
+<section class="card" id="packCard" aria-labelledby="h-pack">
+  <h2 id="h-pack">Starter rules</h2>
+  <p class="muted small">Ready-made rules for common payees in the United States: paychecks, the usual bills, and everyday spending such as groceries, fuel and streaming. Bill rules are linked to your bills by name, so add your bills first. Only rules you do not have are added, at the end of the list; nothing you have is changed. Afterwards each one is an ordinary rule to edit or delete.</p>
+  <div class="form">
+    <div class="field"><button class="btn primary" type="button" id="packPreview">See what would be added</button></div>
+    <div class="field"><label for="packFile">…or add rules from a file</label><input id="packFile" type="file" accept=".yaml,.yml,.json"></div>
+    <div class="field"><a class="btn" id="packDownload" href="#" download="starter-rules.yaml">Download the starter rules</a></div>
+  </div>
+  <div id="packResult"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/rules.js"></script>{% endblock %}

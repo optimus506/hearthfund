@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-new">
+  <h2 id="h-new">New access token</h2>
+  <p class="muted small">A token lets another program or an AI agent (such as Claude Code) use this household through
+    the API. <b>Read</b> tokens can only look. <b>Write</b> tokens can also mark bills, add expected items, change,
+    add and remove rows (removing can be undone), upload and reconcile bank exports, change payee rules, change a
+    recurring item's card, status, notes or amounts, update debts and undo the newest reconciliation: never more than
+    you can do yourself. They cannot change a recurring item's schedule, settings or members. Every change is in the activity log under the token's name.</p>
+  <form class="form" id="newForm">
+    <div class="field"><label for="tName">Name</label><input id="tName" type="text" maxlength="60" placeholder="e.g. Claude on my laptop" required></div>
+    <div class="field"><label for="tScope">Access</label><select id="tScope"><option value="read">Read only</option><option value="write">Read and write</option></select></div>
+    <div class="field"><label for="tDays">Expires</label><select id="tDays"><option value="30">In 30 days</option><option value="90" selected>In 90 days</option><option value="365">In a year</option><option value="">Never</option></select></div>
+    <div class="field"><button class="btn primary" type="submit">Create token</button></div>
+  </form>
+  <div class="verdict good" id="shown" hidden>
+    <b>Copy this token now. It is not shown again.</b>
+    <div class="row-actions"><code class="pre" id="secret"></code><button class="btn" type="button" id="copy">Copy</button></div>
+    <details open><summary>Connect Claude Code</summary>
+      <pre class="pre" id="claudeCmd"></pre>
+      <p class="muted small">Or call the REST API: <code id="curlCmd"></code>. Details in docs/API.md.</p>
+    </details>
+  </div>
+</section>
+<section class="card" aria-labelledby="h-list">
+  <h2 id="h-list">Tokens</h2>
+  <div id="tokenList"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/access.js"></script>{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="strip" id="strip" aria-label="Summary"></section>
+<section class="card checkin" aria-labelledby="h-check">
+  <div class="section-head"><h2 id="h-check">Weekly check-in</h2><span class="muted small" id="checkLast"></span></div>
+  <ol class="steps" id="checkSteps"><li class="empty">Loading…</li></ol>
+  <div hidden><div class="alerts" id="alerts" data-skip="unscheduled" aria-live="polite"></div>
+    <p class="muted small" id="noalerts" hidden>Nothing needs attention right now.</p></div>
+  <div class="row-actions"><button class="btn primary" type="button" id="checkDone" hidden>Done for this week</button></div>
+</section>
+<section class="card payday" aria-labelledby="h-pay">
+  <div class="section-head"><h2 id="h-pay">Until payday</h2><a class="small" href="/h/{{ household.id }}/bills">Bills by payday</a></div>
+  <div id="pay"><div class="empty">Loading…</div></div>
+</section>
+<section class="card" aria-labelledby="h-spark">
+  <div class="section-head"><h2 id="h-spark">The next 60 days</h2><a class="small" href="/h/{{ household.id }}/bills#h-chart">Full forecast</a></div>
+  <div class="chart" id="spark"></div>
+</section>
+<section class="card wins" aria-labelledby="h-wins" id="winsCard" hidden>
+  <div class="section-head"><h2 id="h-wins">Wins</h2><button class="btn small" type="button" id="winsOff" hidden>Hide wins</button></div>
+  <div id="winsNew" aria-live="polite"></div>
+  <ul class="list plain small" id="winsPast"></ul>
+</section>
+<section class="card" aria-labelledby="h-goals" id="goalsCard" hidden>
+  <div class="section-head"><h2 id="h-goals">Goals</h2><a class="small" href="/h/{{ household.id }}/goals">All goals</a></div>
+  <div id="homeGoals"></div>
+</section>
+<section class="card" aria-labelledby="h-ahead">
+  <div class="section-head"><h2 id="h-ahead">Paydays ahead</h2><span class="muted small">Money in and out between paydays</span></div>
+  <ol class="timeline" id="ahead"></ol>
+</section>
+<nav class="card quick" aria-label="Shortcuts">
+  <a class="btn" href="/h/{{ household.id }}/plan">Can we afford it?</a>
+  <a class="btn" href="/h/{{ household.id }}/checkup">Bill check-up</a>
+  <a class="btn" href="/h/{{ household.id }}/report">Where the money goes</a>
+</nav>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/home.js"></script>{% endblock %}

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-find" id="findCard" hidden>
+  <h2 id="h-find">Matching bills</h2>
+  <p class="muted small">Every open row in the forecast whose name matches the search, not only the next weeks. Tick rows to change them together.</p>
+  <div id="findResults"></div>
+  <div class="bulkbar" id="bulkBar" hidden>
+    <span class="num" id="bulkCount" aria-live="polite"></span>
+    <span class="field"><label for="bulkAmount">New amount</label><input id="bulkAmount" type="text" inputmode="decimal"></span>
+    <button class="btn primary" type="button" id="bulkChange">Set amount</button>
+    <span class="field"><label for="bulkStatus">Status</label><select id="bulkStatus"><option value="none">Not yet</option><option value="manual">Scheduled</option><option value="autopay">Autopay</option></select></span>
+    <button class="btn" type="button" id="bulkMark">Mark</button>
+    <button class="btn" type="button" id="bulkDone" title="Already paid or received: it is in the bank, take it out of the forecast">Already done</button>
+    <button class="btn danger" type="button" id="bulkRemove" title="It is not happening: skip it and keep the money in the budget">Won’t happen</button>
+  </div>
+</section>
+<section class="card" aria-labelledby="h-bills">
+  <div class="section-head">
+    <h2 id="h-bills">Upcoming bills</h2>
+    <div class="legend"><span><i class="sw autopay"></i>Autopay</span><span><i class="sw manual"></i>Scheduled</span><span><i class="sw"></i>Not yet</span></div>
+  </div>
+  <p class="muted small">Bills are listed under the payday that funds them. Tap a status to change it.</p>
+  <div class="groups" id="groups"><div class="empty">Loading…</div></div>
+  <div><button class="btn" id="more" type="button" hidden>Show 4 more weeks</button></div>
+</section>
+<section class="card" aria-labelledby="h-chart">
+  <div class="section-head"><h2 id="h-chart">Balance forecast</h2><span class="muted small">Dashed lines: $0 and the cushion. Includes open expected items.</span></div>
+  <div class="chart" id="chart"></div>
+  <details><summary>Show as a table</summary><div id="tbl"></div></details>
+</section>
+<section class="card" aria-labelledby="h-auto">
+  <h2 id="h-auto">Autopay bills</h2>
+  <p class="muted small">Turn on for bills that pay themselves. They show green every month; a single month can still be changed above.</p>
+  <div class="list" id="autopay"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/bills.js"></script>{% endblock %}

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-u">
+  <h2 id="h-u">Users</h2>
+  <div id="users"></div>
+  <form class="form" id="userForm">
+    <div class="field"><label for="uName">Username</label><input id="uName" type="text" maxlength="64" autocomplete="off"></div>
+    <div class="field"><label for="uPass">Password</label><input id="uPass" type="password" autocomplete="new-password" minlength="10"></div>
+    <div class="field"><label for="uAdmin"><input id="uAdmin" type="checkbox"> Admin</label></div>
+    <div class="field"><button class="btn primary" type="submit">Create user</button></div>
+  </form>
+</section>
+<section class="card" aria-labelledby="h-hh">
+  <h2 id="h-hh">Households</h2>
+  <div id="households"></div>
+  <form class="form" id="hhForm">
+    <div class="field"><label for="hName">Name</label><input id="hName" type="text" maxlength="80"></div>
+    <div class="field"><label for="hDemo"><input id="hDemo" type="checkbox"> Fill with demo data</label></div>
+    <div class="field"><button class="btn primary" type="submit">Create household</button></div>
+  </form>
+</section>
+<section class="card" aria-labelledby="h-sys"><h2 id="h-sys">System</h2><div id="system"></div></section>
+<section class="card" aria-labelledby="h-al"><h2 id="h-al">Server activity</h2><div id="audit"></div></section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/admin.js"></script>{% endblock %}

@@ -1,0 +1,9 @@
+# Build the image from this folder instead of pulling the released one (development, or no registry access):
+#   docker compose -f docker-compose.yml -f compose.build.yml up -d --build
+# or put COMPOSE_FILE=docker-compose.yml:compose.build.yml in .env so plain `docker compose` commands use it.
+services:
+  init:
+    image: ${HBUDGET_IMAGE:-hearthfund:local}
+  app:
+    image: ${HBUDGET_IMAGE:-hearthfund:local}
+    build: .

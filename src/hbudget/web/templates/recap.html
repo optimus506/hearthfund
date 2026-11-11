@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-rc">
+  <div class="section-head">
+    <h2 id="h-rc">Recap</h2>
+    <div class="row-actions">
+      <select id="rcSpan" aria-label="Month or year"><option value="month">Month</option><option value="year">Year in review</option></select>
+      <button class="btn" type="button" id="rcPrev">‹ Earlier</button>
+      <span class="num" id="rcPeriod" aria-live="polite"></span>
+      <button class="btn" type="button" id="rcNext">Later ›</button>
+    </div>
+  </div>
+  <p class="muted small">What happened, from the bank and card history and the bills: money in and out next to the period before, what was paid, where the card money went, new subscriptions and price changes, and the wins.</p>
+  <div class="kpis" id="rcKpis"></div>
+  <div id="rcNote"></div>
+</section>
+<div class="grid2">
+  <section class="card" aria-labelledby="h-rcb"><h2 id="h-rcb">Bills</h2><div id="rcBills"></div></section>
+  <section class="card" aria-labelledby="h-rcc"><h2 id="h-rcc">Card spending</h2><div id="rcCard"></div></section>
+  <section class="card" aria-labelledby="h-rcp"><h2 id="h-rcp">Where the money went</h2><div id="rcPayees"></div></section>
+  <section class="card" aria-labelledby="h-rcs"><h2 id="h-rcs">Subscriptions and wins</h2><div id="rcMore"></div></section>
+</div>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/recap.js"></script>{% endblock %}

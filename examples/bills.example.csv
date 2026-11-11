@@ -1,0 +1,7 @@
+name,kind,amount,cadence,start,day,days,month,weekend,status,funded_by,card,group
+Pay A,income,2400,semimonthly,,,1;15,,before,,,,
+Rent,bill,1500,monthly,,1,,,,autopay,,,Home
+Electric,bill,150,monthly,,6,,,,manual,,,Utilities
+Phone,bill,60,monthly,,20,,,,none,pay-a,,Utilities
+Car insurance,bill,600,yearly,,1,,9,,,,,Insurance
+Grocery,spending,150,weekly,2024-01-06,,,,,,,,Food & everyday

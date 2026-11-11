@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-e">
+  <h2 id="h-e">Export</h2>
+  <p class="muted small">A backup holds everything in this household (bills, rows, rules, debts, bank history, notes) and can be imported again with no loss.</p>
+  <div class="row-actions">
+    {% if role in ('owner', 'editor') %}
+    <a class="btn primary" href="/api/h/{{ household.id }}/export/backup.yaml">Backup (YAML)</a>
+    <a class="btn" href="/api/h/{{ household.id }}/export/backup.json">Backup (JSON)</a>
+    {% endif %}
+    <a class="btn" href="/api/h/{{ household.id }}/export/forecast.csv">Forecast (CSV)</a>
+    <a class="btn" href="/api/h/{{ household.id }}/export/forecast.xlsx">Forecast (Excel)</a>
+  </div>
+</section>
+<section class="card" id="wipeCard" aria-labelledby="h-w">
+  <h2 id="h-w">Delete all budget data</h2>
+  <p class="muted small">Removes every bill, row, rule, debt, upload and bank transaction of this household. Members and the audit log stay. Export a backup first.</p>
+  <form class="form" id="wipeForm">
+    <div class="field"><label for="wipeName">Type the household name to confirm</label><input id="wipeName" type="text" autocomplete="off"></div>
+    <div class="field"><button class="btn danger" type="submit">Delete all budget data</button></div>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/exportpage.js"></script>{% endblock %}

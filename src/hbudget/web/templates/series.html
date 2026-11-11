@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-s">
+  <div class="section-head"><h2 id="h-s">Pay, bills and spending</h2><button class="btn" id="genBtn" type="button">Extend the forecast</button></div>
+  <p class="muted small">Everything that repeats: the pay that comes in, the bills that go out of checking, and spending budgets such as groceries. Each item makes dated rows in the forecast; changing one updates its future rows, and rows you changed by hand stay as they are. What you owe on cards and loans is on the <a href="debts">Debts</a> tab.</p>
+  <div id="seriesList"></div>
+  <form class="form" id="seriesForm">
+    <input type="hidden" id="sId">
+    <div class="field"><label for="sName">Name</label><input id="sName" type="text" maxlength="60" placeholder="e.g. Electric"></div>
+    <div class="field"><label for="sKind">Kind</label><select id="sKind"><option value="bill">Bill</option><option value="income">Pay</option><option value="spending">Spending budget</option></select></div>
+    <div class="field"><label for="sAmount">Amount</label><input id="sAmount" type="text" inputmode="decimal" placeholder="150.00"></div>
+    <div class="field"><label for="sCadence">Repeats</label><select id="sCadence"><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="semimonthly">Twice a month</option><option value="yearly">Yearly</option><option value="once">One time</option></select></div>
+    <div class="field"><label for="sStart">First date</label><input id="sStart" type="date"></div>
+    <div class="field"><label for="sEnd">Last date (optional)</label><input id="sEnd" type="date"></div>
+    <div class="field"><label for="sInterval">Every N periods</label><input id="sInterval" type="text" inputmode="numeric" value="1"></div>
+    <div class="field"><label for="sDay">Day of month</label><input id="sDay" type="text" inputmode="numeric" placeholder="1-31"></div>
+    <div class="field"><label for="sDays">Two days (twice a month)</label><input id="sDays" type="text" placeholder="1,15"></div>
+    <div class="field"><label for="sMonth">Month (yearly)</label><input id="sMonth" type="text" inputmode="numeric" placeholder="1-12"></div>
+    <div class="field"><label for="sWeekend">On a weekend</label><select id="sWeekend"><option value="none">Keep the date</option><option value="before">Move to Friday before</option><option value="after">Move to Monday after</option></select></div>
+    <div class="field"><label for="sFunded">Paid from</label><select id="sFunded"></select></div>
+    <div class="field"><label for="sStatus">Status</label><select id="sStatus"><option value="none">Not scheduled</option><option value="manual">Scheduled by hand</option><option value="autopay">Autopay</option></select></div>
+    <div class="field"><label for="sCard">Paid with card (account id)</label><input id="sCard" type="text" maxlength="40"></div>
+    <div class="field"><label for="sDebt">Pays this debt</label><select id="sDebt"><option value="">None</option></select>
+      <small class="muted" id="sDebtHint" hidden></small></div>
+    <div class="field"><label for="sGroup">Report group</label><input id="sGroup" type="text" maxlength="40"></div>
+    <div class="field wide"><label for="sNotes">Notes</label><textarea id="sNotes" rows="2" maxlength="1000" placeholder="e.g. account number ending 1234, call to change the date"></textarea></div>
+    <div class="field"><label for="sActive"><input id="sActive" type="checkbox" checked> Active</label></div>
+    <div class="field"><button class="btn primary" id="sSave" type="submit">Add</button></div>
+    <div class="field"><button class="btn" id="sCancel" type="button" hidden>Cancel</button></div>
+  </form>
+</section>
+<section class="card" id="seasonal" hidden aria-labelledby="h-sea">
+  <h2 id="h-sea">Seasonal amounts: <span id="seaName"></span></h2>
+  <p class="muted small">Set the amount by month, e.g. <code>5-9=120, 10-4=40</code> (ranges may wrap the year end). Only future rows change.</p>
+  <div class="form">
+    <div class="field"><label for="seaRules">Months = amount</label><input id="seaRules" type="text"></div>
+    <div class="field"><label for="seaFrom">From (optional)</label><input id="seaFrom" type="date"></div>
+    <div class="field"><button class="btn" id="seaDry" type="button">Preview</button></div>
+    <div class="field"><button class="btn primary" id="seaSave" type="button">Save</button></div>
+  </div>
+  <div id="seaResult"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/series.js"></script>{% endblock %}

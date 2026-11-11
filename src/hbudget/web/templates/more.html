@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-more">
+  <h2 id="h-more" class="sr-only">More pages</h2>
+  <ul class="linklist">
+    {% for p in nav.more %}<li><a href="/h/{{ household.id }}/{{ p.key }}"><b>{{ p.label }}</b><span class="muted small">{{ p.about }}</span></a></li>{% endfor %}
+  </ul>
+</section>
+<section class="card" aria-labelledby="h-you">
+  <h2 id="h-you">You</h2>
+  <ul class="linklist">
+    <li><a href="/account"><b>Account</b><span class="muted small">Change your password</span></a></li>
+    {% if user.is_admin %}<li><a href="/admin"><b>Admin</b><span class="muted small">Households and users on this server</span></a></li>{% endif %}
+  </ul>
+</section>
+{% endblock %}

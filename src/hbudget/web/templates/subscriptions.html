@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-sub">
+  <div class="section-head"><h2 id="h-sub">Subscriptions</h2><span class="muted small num" id="subTotal"></span></div>
+  <p class="muted small">Charges that repeat every month or every year at the same amount, found in the bank and card history. A new price, a new charge and one that stopped are flagged. Bills and loans (bank charges a bill rule matches) are counted apart from the subscriptions. Nothing here moves money or changes the budget.</p>
+  <div class="kpis" id="subKpis"></div>
+  <div id="subLive"></div>
+</section>
+<section class="card" aria-labelledby="h-stop">
+  <h2 id="h-stop">Stopped</h2>
+  <p class="muted small">Charges that missed their expected date in the last six months. If one should still be running, check with the company.</p>
+  <div id="subStopped"></div>
+</section>
+<section class="card" aria-labelledby="h-hidden" id="hHidden" hidden>
+  <h2 id="h-hidden">Not subscriptions</h2>
+  <p class="muted small">Payees marked "Not a subscription". They are left out of the totals, also when they are charged again.</p>
+  <div id="subHidden"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/subscriptions.js"></script>{% endblock %}

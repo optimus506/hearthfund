@@ -1,0 +1,2 @@
+# Vulnerabilities the image scan (CI, trivy) may ignore. One CVE id per line, each with a reason and a date
+# to look again. Keep this list empty unless a finding is unfixable and does not affect this app.

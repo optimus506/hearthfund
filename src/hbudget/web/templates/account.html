@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-a">
+  <h2 id="h-a">Change password</h2>
+  {% if error %}<p class="msg err" role="alert">{{ error }}</p>{% endif %}
+  {% if notice %}<p class="msg ok" role="status">{{ notice }}</p>{% endif %}
+  <form method="post" action="/account/password" class="field">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label for="current">Current password</label><input id="current" name="current" type="password" autocomplete="current-password" required>
+    <label for="new">New password (at least 10 characters)</label><input id="new" name="new" type="password" autocomplete="new-password" required minlength="10">
+    <div><button class="btn primary" type="submit">Change password</button></div>
+  </form>
+  <p class="muted small">Changing the password signs out your other sessions.</p>
+</section>
+<section class="card" aria-labelledby="h-2fa">
+  <h2 id="h-2fa">Two-factor sign-in</h2>
+  <p>{% if two_factor %}<span class="chip good">On</span> Signing in asks for a code from your authenticator app.{% else %}<span class="chip">Off</span> Add a code from your phone to your password.{% endif %}
+  <a class="btn" href="/account/2fa">{% if two_factor %}Manage{% else %}Set up{% endif %}</a></p>
+</section>
+<section class="card"><h2>Households</h2>
+  {% if households %}<div class="list">{% for h in households %}<div class="item"><a href="/h/{{ h.id }}/bills">{{ h.name }}</a><span class="muted small">{{ h.role }}</span></div>{% endfor %}</div>
+  {% else %}<p class="muted">You are not a member of any household yet. Ask the owner or the admin to add you.</p>{% endif %}
+</section>
+{% endblock %}

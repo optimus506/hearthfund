@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-cal">
+  <div class="section-head">
+    <h2 id="h-cal">Cash-flow calendar</h2>
+    <div class="row-actions">
+      <button class="btn" type="button" id="calPrev">‹ Earlier</button>
+      <span class="num" id="calMonth" aria-live="polite"></span>
+      <button class="btn" type="button" id="calNext">Later ›</button>
+    </div>
+  </div>
+  <p class="muted small">What comes in and goes out each day, from the forecast (expected items included), and the checkbook balance at the end of the day. Days under the cushion are marked.</p>
+  <div class="kpis" id="calKpis"></div>
+  <div id="cal"><div class="empty">Loading…</div></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/calendar.js"></script>{% endblock %}

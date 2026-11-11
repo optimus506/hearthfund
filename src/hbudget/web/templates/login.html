@@ -1,0 +1,9 @@
+{% extends "auth.html" %}
+{% block form %}
+<form method="post" action="/login" class="field">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="username">Username</label><input id="username" name="username" autocomplete="username" required maxlength="64" value="{{ username or '' }}">
+  <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required maxlength="256">
+  <div><button class="btn primary" type="submit">Sign in</button></div>
+</form>
+{% endblock %}

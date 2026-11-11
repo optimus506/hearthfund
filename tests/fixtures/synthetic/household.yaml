@@ -1,0 +1,51 @@
+# Synthetic regression household (fake, round amounts). Expected numbers are in
+# tests/core/test_synthetic_regression.py, computed by hand row by row.
+format: household-budget/bill-system
+version: 1
+
+household:
+  name: Synthetic household
+  currency: USD
+  start_balance: 1000
+  as_of: 2029-03-01
+  horizon: {mode: fixed, end: 2029-04-30}
+
+accounts:
+  - {id: checking, name: Checking, kind: checking}
+  - {id: rewards, name: Rewards card, kind: credit_card, balance: 2000, apr: 24.99, payment: 320, limit: 5000}
+
+income:
+  - id: pay-a
+    name: Pay A
+    amount: 2000
+    schedule: {cadence: semimonthly, start: 2029-03-01, days: [1, 15], weekend: before}
+  - id: pay-b
+    name: Pay B
+    amount: 1000
+    schedule: {cadence: monthly, start: 2029-03-01, day: 31, weekend: before}
+
+bills:
+  - {id: mortgage, name: Mortgage, amount: 1800, schedule: {cadence: monthly, start: 2029-03-01, day: 3},
+     status: autopay}
+  - {id: electric, name: Electric, amount: 150, schedule: {cadence: monthly, start: 2029-03-01, day: 6}}
+  - {id: car, name: Car loan, amount: 300, schedule: {cadence: monthly, start: 2029-03-01, day: 10},
+     funded_by: pay-a}
+  - id: lawn
+    name: Lawn care
+    amount: 40
+    schedule: {cadence: monthly, start: 2029-03-01, day: 14}
+    seasonal: {"4-8": 120, "9-3": 40}
+    card: rewards
+  - {id: placeholder, name: Spare (placeholder), amount: 0, schedule: {cadence: monthly, start: 2029-03-01, day: 25}}
+  - {id: car-insurance, name: Car insurance, amount: 3210,
+     schedule: {cadence: yearly, start: 2029-01-01, month: 4, day: 29}}
+
+spending:
+  - {id: grocery, name: Grocery, amount: 160, schedule: {cadence: weekly, start: 2029-03-03}, card: rewards}
+
+payee_rules:
+  - {id: payroll-a, name: Pay A, kind: pay, contains: ["EMPLOYER A PAYROLL"], direction: in, targets: [pay-a]}
+  - {id: mortgage, name: Mortgage, kind: bill, contains: ["HOME LOAN SERVICER"], targets: [mortgage]}
+  - {id: electric, name: Electric, kind: bill, contains: ["ELECTRIC CO"], targets: [electric]}
+  - {id: rewards, name: Rewards card payment, kind: card, contains: ["TRANSFER TO CARD 1234"], card: rewards}
+  - {id: shopping, name: Online shopping, kind: track, contains: ["ONLINE MARKETPLACE"], direction: out}

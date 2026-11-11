@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-conn">
+  <div class="section-head"><h2 id="h-conn">Bank connection</h2><span class="muted small" id="connServer"></span></div>
+  <div id="conn"><div class="empty">Loading…</div></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/connections.js"></script>{% endblock %}

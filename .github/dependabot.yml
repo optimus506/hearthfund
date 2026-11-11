@@ -1,0 +1,20 @@
+# Weekly update pull requests: the Python base image (pinned by digest in the Dockerfile) and the GitHub Actions.
+# Python packages are pinned with hashes in requirements.lock (`make lock`); CI's pip-audit and the weekly
+# scheduled run flag known vulnerabilities in them.
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "deps(image)"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps(actions)"

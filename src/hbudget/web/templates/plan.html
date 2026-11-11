@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-wi">
+  <h2 id="h-wi">Can we afford it?</h2>
+  <p class="muted small">Try a purchase or extra income and see the new lowest balance. Nothing is saved unless you add it to expected items.</p>
+  <form class="form" id="wiForm">
+    <div class="field"><label for="wiWhat">What</label><input id="wiWhat" type="text" maxlength="60" placeholder="e.g. Car repair"></div>
+    <div class="field"><label for="wiAmt">Amount</label><input id="wiAmt" type="text" inputmode="decimal" placeholder="400.00"></div>
+    <div class="field"><label for="wiDate">Date</label><input id="wiDate" type="date"></div>
+    <div class="field"><label for="wiDir">Type</label><select id="wiDir"><option value="out">Money out</option><option value="in">Money in</option></select></div>
+    <div class="field"><button class="btn primary" type="submit">Check</button></div>
+  </form>
+  <div id="wiResult"></div>
+  <div class="list" id="wiList"></div>
+  <div class="legend" id="wiLegend" hidden><span><i class="sw line"></i>Now</span><span><i class="sw line whatif"></i>With the what-if</span><span><i class="sw line zero"></i>$0</span><span><i class="sw line cushion"></i>Cushion</span></div>
+  <div class="chart" id="wiChart" hidden></div>
+  <details id="wiTableBox" hidden><summary>Show as a table</summary><div id="wiTable"></div></details>
+</section>
+<section class="card" aria-labelledby="h-ex">
+  <h2 id="h-ex">Expected items</h2>
+  <p class="muted small">Money you know is coming or going that the bank has not posted yet. Open items count in the forecast; reconciliation matches them against new postings.</p>
+  <form class="form" id="exForm">
+    <div class="field"><label for="exWhat">What</label><input id="exWhat" type="text" maxlength="60" placeholder="e.g. Refund"></div>
+    <div class="field"><label for="exAmt">Amount</label><input id="exAmt" type="text" inputmode="decimal" placeholder="120.00"></div>
+    <div class="field"><label for="exDate">Expected date</label><input id="exDate" type="date"></div>
+    <div class="field"><label for="exDir">Type</label><select id="exDir"><option value="out">Money out</option><option value="in">Money in</option></select></div>
+    <div class="field"><button class="btn primary" type="submit">Add</button></div>
+  </form>
+  <div class="list" id="exList"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/plan.js"></script>{% endblock %}

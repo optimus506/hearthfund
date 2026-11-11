@@ -1,0 +1,15 @@
+{% extends "auth.html" %}
+{% block form %}
+<p class="muted small">First run. Create the admin account and the first household. The setup token is in the file
+<code>setup-token</code> in the data folder (for Docker: <code>docker compose exec app cat /data/setup-token</code>).</p>
+<form method="post" action="/setup" class="field">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="token">Setup token</label><input id="token" name="token" autocomplete="off" required maxlength="128">
+  <label for="username">Admin username</label><input id="username" name="username" autocomplete="username" required maxlength="64" value="{{ username or '' }}">
+  <label for="password">Password (at least 10 characters)</label><input id="password" name="password" type="password" autocomplete="new-password" required minlength="10" maxlength="256">
+  <label for="household">Household name</label><input id="household" name="household" required maxlength="80" value="{{ household or 'Our household' }}">
+  <label for="start">Start with</label>
+  <select id="start" name="start"><option value="empty">An empty budget</option><option value="demo"{% if demo_default %} selected{% endif %}>The demo household (made-up data to try things out)</option></select>
+  <div><button class="btn primary" type="submit">Create</button></div>
+</form>
+{% endblock %}

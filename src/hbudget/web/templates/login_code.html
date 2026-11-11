@@ -1,0 +1,10 @@
+{% extends "auth.html" %}
+{% block form %}
+<form method="post" action="/login/code" class="field">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}">
+  <label for="code">Code from your authenticator app</label>
+  <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="40" autofocus>
+  <div><button class="btn primary" type="submit">Sign in</button></div>
+</form>
+<p class="muted small">No phone at hand? Enter one of your recovery codes instead; each works once. <a href="/login">Start again</a></p>
+{% endblock %}

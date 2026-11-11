@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-up">
+  <h2 id="h-up">Upload an export</h2>
+  <p class="muted small">CSV, OFX or QFX from your bank, or a card export. The file is read and thrown away; only the transactions are kept, with account numbers masked. Nothing changes in the budget until you apply a reconciliation.</p>
+  <form class="form" id="upForm">
+    <div class="field"><label for="upFile">File</label><input id="upFile" type="file" accept=".csv,.ofx,.qfx,text/csv"></div>
+    <div class="field"><label for="upKind">Kind</label><select id="upKind"><option value="bank">Bank (checking)</option><option value="card">Card</option></select></div>
+    <div class="field"><label for="upProfile">Layout</label><select id="upProfile"><option value="">Detect automatically</option></select></div>
+    <div class="field"><button class="btn primary" type="submit">Upload</button></div>
+  </form>
+  <div class="card" id="mapping" hidden></div>
+  <div class="list" id="uploads"></div>
+</section>
+<section class="card" id="preview" hidden aria-live="polite"></section>
+<section class="card" aria-labelledby="h-hist"><h2 id="h-hist">Past reconciliations</h2><div class="list" id="history"></div></section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/reconcile.js"></script>{% endblock %}

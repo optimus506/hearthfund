@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-m">
+  <h2 id="h-m">Members</h2>
+  <p class="muted small">Owner: everything. Editor: changes the budget. Contributor: marks bills and expected items only. Viewer: reads only.</p>
+  <div id="memberList"></div>
+  <form class="form" id="addForm">
+    <div class="field"><label for="mUser">Username</label><input id="mUser" type="text" maxlength="64" autocomplete="off"></div>
+    <div class="field"><label for="mRole">Role</label><select id="mRole"><option value="viewer">Viewer</option><option value="contributor">Contributor</option><option value="editor">Editor</option><option value="owner">Owner</option></select></div>
+    <div class="field"><label for="mPass">Password for the new user{% if user and user.is_admin %} (leave empty to add someone who already has an account){% endif %}</label><input id="mPass" type="password" autocomplete="new-password"></div>
+    <div class="field"><button class="btn primary" type="submit">Add</button></div>
+  </form>
+</section>
+<section class="card" aria-labelledby="h-audit">
+  <h2 id="h-audit">Activity</h2>
+  <p class="muted small">Who changed what (no amounts or descriptions are kept here). "restored" marks entries that came in with a backup.</p>
+  <div id="auditList"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/members.js"></script>{% endblock %}
