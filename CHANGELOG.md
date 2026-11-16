@@ -9,6 +9,8 @@ tracker; those issues are not public, and the public tracker numbers its issues 
 
 ## Unreleased
 
+## 1.0.0 - 2026-11-16
+
 ### Changed
 - **Only the admin adds someone who already has an account** to a household (D-098). Owners can still create
   new users from the Members page.
