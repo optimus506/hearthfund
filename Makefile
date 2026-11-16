@@ -38,7 +38,7 @@ lock:               ## re-pin the runtime dependencies and the build backend wit
 
 IMAGE ?= hearthfund:latest
 PLATFORMS ?= linux/amd64,linux/arm64
-PREVIOUS_REF ?=  # the last release tag; empty until the first release (the upgrade test is then skipped)
+PREVIOUS_REF ?= v1.0.0
 
 image:              ## build the Docker image for this machine (loaded into the local image store)
 	docker buildx build --load -t $(IMAGE) .
