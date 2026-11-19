@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from datetime import date
+from itertools import pairwise
 from typing import Any
 
 import pytest
@@ -125,7 +127,7 @@ def test_read_endpoints(admin, anon):
     b = get(anon, '/bills', t, params={'days': 10}).json()
     assert [x['name'] for x in b['bills']] == ['Rent', 'Electric'] and b['through'] == '2029-03-11'
     assert set(b['bills'][0]) == {'id', 'name', 'kind', 'amount', 'direction', 'due', 'status', 'late', 'card',
-                                  'balance_after', 'note'}
+                                  'balance_after', 'note', 'labels', 'needs_scheduling'}
     assert get(anon, '/bills', t, params={'days': 0}).status_code == 400
     f = get(anon, '/forecast', t, params={'days': 20}).json()
     assert all(p['date'] <= '2029-03-21' for p in f['points'])
@@ -292,10 +294,12 @@ def test_mcp_handshake_and_tools(admin, anon):
     assert set(all_tools) - read_tools == {
         'add_expected_item', 'set_bill_status', 'set_expected_item_status', 'change_row_amount', 'add_row',
         'remove_row', 'mark_row_done', 'undo_row_change', 'move_row', 'upload_bank_export', 'reconcile_preview',
-        'reconcile_apply', 'delete_upload', 'set_series_details', 'add_rule', 'update_rule', 'delete_rule',
+        'reconcile_apply', 'delete_upload', 'set_series_details', 'add_series', 'sync_bank',
+        'add_rule', 'update_rule', 'delete_rule',
         'reorder_rules', 'set_series_amount', 'set_series_seasonal', 'update_debt', 'list_changes',
+        'set_investment_balance',
         'undo_reconciliation', 'set_merchant_category', 'set_purchase_category', 'hide_recurring_charge',
-        'set_bill_note', 'upload_removal'}
+        'set_bill_note', 'set_bill_labels', 'upload_removal'}
     assert 'get_reconciliation' in read_tools
     assert all_tools['get_summary']['annotations']['readOnlyHint'] is True
     assert all_tools['reconcile_preview']['annotations']['readOnlyHint'] is True
@@ -775,3 +779,51 @@ def test_get_reconciliation_shows_each_line(admin, anon, app):
     assert get(anon, '/reconciliations/%s' % rec['id'], ro).json()['details'] == d
     assert get(anon, '/reconciliations/nope', ro).status_code == 404
     assert 'Not found' in tool(anon, ro, 'get_reconciliation', rec_id='nope')
+
+
+def test_add_a_recurring_item_every_three_months(admin, anon, app):
+    from hbudget.core.dates import add_months
+    from hbudget.db import connection, repo
+    seed(admin)
+    t, ro = make_token(admin, 'write'), make_token(admin, 'read')
+    assert 'error' in rpc(anon, ro, 'tools/call', {'name': 'add_series', 'arguments': {}}).json()   # not for a reader
+    start = date(2029, 3, 1)
+    months = {3, 6, 9, 12}
+    out = tool(anon, t, 'add_series', name='Trash pickup', kind='bill', amount=7500, cadence='monthly', interval=3,
+               start=start.isoformat(), status='autopay', group='Home', notes='quarterly')
+    assert out['next_dates'] == [add_months(start, 3 * k).isoformat() for k in range(4)]
+    listed = {s['id']: s for s in tool(anon, ro, 'list_series')['series']}[out['id']]
+    assert (listed['cadence'], listed['interval'], listed['start'], listed['status'], listed['card'],
+            listed['group']) == ('monthly', 3, start.isoformat(), 'autopay', None, 'Home')
+    conn = connection.connect(app.state.settings.db_path)
+    b = repo.load_budget(conn, admin.hid)
+    conn.close()
+    rows = sorted(r.due_date for r in b.rows if r.series_id == out['id'])
+    assert len(rows) >= 2 and rows[0] == start and all(d.day == 1 and d.month in months for d in rows)
+    assert all(add_months(a, 3) == b for a, b in pairwise(rows))        # one series, three months apart
+    # bad input is refused with a message, nothing is added
+    n = len(tool(anon, ro, 'list_series')['series'])
+    assert 'No credit card' in tool(anon, t, 'add_series', name='X', kind='bill', amount=100, cadence='monthly',
+                                    start=start.isoformat(), card='nope')
+    assert isinstance(tool(anon, t, 'add_series', name='X', kind='bill', amount=100, cadence='monthly',
+                           start='soon'), str)
+    assert isinstance(tool(anon, t, 'add_series', name='X', kind='bill', amount=100, cadence='semimonthly',
+                           start=start.isoformat(), days=[5, 5]), str)
+    assert len(tool(anon, ro, 'list_series')['series']) == n
+    # the REST route takes the form's body; "every N" is dropped where it means nothing
+    h = {'Authorization': 'Bearer ' + t}
+    r = anon.post('/api/v1/series', headers=h, json={'name': 'Club dues', 'kind': 'bill', 'amount': 12000, 'schedule': {
+        'cadence': 'yearly', 'start': start.isoformat(), 'interval': 4}})
+    assert r.status_code == 200 and len(r.json()['next_dates']) == 4
+    assert {s['id']: s for s in tool(anon, ro, 'list_series')['series']}[r.json()['id']]['interval'] == 1
+    assert anon.post('/api/v1/series', headers={'Authorization': 'Bearer ' + ro}, json={
+        'name': 'No', 'kind': 'bill', 'amount': 1, 'schedule': {'cadence': 'monthly', 'start': start.isoformat()}}
+    ).status_code == 403
+
+
+def test_bank_connection_on_a_server_without_plaid(admin, anon):
+    ro = make_token(admin, 'read')
+    off = {'available': False, 'enabled': False, 'banks': [], 'balance': None}
+    assert {k: v for k, v in tool(anon, ro, 'get_bank_connection').items() if k != 'note'} == off
+    assert get(anon, '/bank-connection', ro).json() == off
+    assert 'no bank connection' in tool(anon, make_token(admin, 'write', name='w'), 'sync_bank')

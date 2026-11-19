@@ -39,7 +39,8 @@ def test_five_sections_and_each_sections_pages(admin):
                                  ('debts', 'bills', ['bills', 'series', 'debts', 'checkup']),
                                  ('plan', 'plan', ['plan', 'goals', 'calendar']),
                                  ('goals', 'plan', ['plan', 'goals', 'calendar']),
-                                 ('card', 'money', ['reconcile', 'report', 'card', 'subscriptions', 'recap']),
+                                 ('card', 'money', ['reconcile', 'report', 'card', 'subscriptions', 'recap',
+                                                    'investments']),
                                  ('notes', 'more', ['rules', 'settings', 'notes', 'import', 'export', 'members',
                                                     'access']),
                                  ('more', 'more', [])):

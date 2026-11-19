@@ -15,7 +15,7 @@ __all__ = [
     'Cents', 'Direction', 'ExpectedItem', 'FlowGroup', 'Goal', 'Horizon', 'IncomeAlert', 'Kind', 'LedgerRow',
     'Milestone', 'PayeeRule',
     'ReconcileSettings', 'RowState', 'RuleKind', 'Schedule', 'Series', 'Settings', 'Severity', 'Status', 'Weekend',
-    'WhatIf', 'row_key', 'row_status', 'slug',
+    'WhatIf', 'needs_scheduling', 'row_key', 'row_status', 'slug',
 ]
 
 
@@ -77,6 +77,7 @@ class AccountKind(StrEnum):
     LOAN = 'loan'
     MORTGAGE = 'mortgage'
     RETIREMENT_LOAN = 'retirement_loan'
+    INVESTMENT = 'investment'        # money held, not owed: only on Money > Investments (D-102)
     OTHER = 'other'
 
 
@@ -91,7 +92,7 @@ class Schedule:
     cadence: Cadence
     start: date                      # weekly/biweekly/once: the first occurrence; others: the first possible date
     end: date | None = None          # last possible occurrence (inclusive, compared with the nominal date)
-    interval: int = 1                # weekly only: every N weeks
+    interval: int = 1                # weekly: every N weeks; monthly: every N months (3 = quarterly)
     day: int | None = None           # monthly/yearly: day of month 1..31 (clamped to the month end)
     days: tuple[int, int] | None = None   # semimonthly: two days, e.g. (1, 15)
     month: int | None = None         # yearly: month 1..12
@@ -115,6 +116,8 @@ class Series:
     active: bool = True
     notes: str = ''
     generated_through: date | None = None   # watermark
+    labels: tuple[str, ...] = ()     # short free-text chips its rows show (D-104)
+    no_schedule: bool = False        # nothing to schedule (e.g. an allowance): no "not scheduled" alert
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +143,7 @@ class LedgerRow:
     cleared_txn_id: str | None = None
     cleared_on: date | None = None
     note: str = ''
+    labels: tuple[str, ...] = ()     # this row's own chips, shown after its item's
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +185,7 @@ class AlertSettings:
     unscheduled_days: int = 7
     expected_grace_days: int = 3
     unmatched_recurring: bool = True
+    debt_update_days: int = 61       # remind to update typed debt balances older than this (D-105); 0: never
     income: tuple[IncomeAlert, ...] = ()
     caps: tuple[CapRule, ...] = ()
 
@@ -338,6 +343,12 @@ class Budget:
 
     def series_by_id(self) -> dict[str, Series]:
         return {s.id: s for s in self.series}
+
+
+def needs_scheduling(row: LedgerRow, series_by_id: dict[str, Series]) -> bool:
+    """False for the rows of a recurring item marked "nothing to schedule" (D-104)."""
+    series = series_by_id.get(row.series_id) if row.series_id else None
+    return not (series and series.no_schedule)
 
 
 def row_status(row: LedgerRow, series_by_id: dict[str, Series]) -> Status:

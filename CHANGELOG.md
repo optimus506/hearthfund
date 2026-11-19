@@ -9,6 +9,110 @@ tracker; those issues are not public, and the public tracker numbers its issues 
 
 ## Unreleased
 
+### Added
+- **Say what a payment paid.** In a dry run, an unmatched money-out bank line now has **This paid…**: it lists
+  the open rows near it (a card's own rows first for a card payment), you tick the ones it paid, and Apply
+  clears them with it, so Undo reopens them together. The running total is shown against the payment. What
+  the rows do not use up stays an unbudgeted payment; if they add up to more, Apply waits until a row comes
+  off or one larger row keeps the rest (it stays open with what is left). A proposal that is not right has the
+  same choice, **Choose the rows it paid…**. In the API and the MCP tool it is `assign` on `reconcile_apply`,
+  and the preview lists each line's `candidates` (D-107).
+- **Card payments made a few days early are proposed.** A payment to a card with no card-funded row dated on
+  or before it is now offered against that card's rows dated up to 7 days after it, marked "dated after the
+  payment". It used to be listed as unmatched, which left the rows open and the forecast counting the money
+  twice. Never automatic (D-107).
+- **Money > Investments.** What the investment and retirement accounts hold and how that moved: the total, its
+  change over 30 days, 3 months, a year and since the first balance, a chart of the total or of one account, and
+  a row per account. Type a balance from a statement whenever you like (an older date fills in the history), or,
+  with the optional bank connection, set a linked account to **Investment: keep its balance on Money >
+  Investments** on More > Bank connection and every sync, the daily one included, notes the day's balance. Only
+  the balance is read, never holdings or the account's transactions. It is a summary: the figures are no part
+  of the forecast, the debts or the goals, and a change is the difference between two balances, so it includes
+  money paid in or taken out (D-102). Investment accounts are in backups; a backup that holds one cannot be
+  restored by an older release.
+- **Investment files.** Money > Investments has **Bring in a file**: an OFX or QFX investment statement (its
+  date, and the value of the holdings plus the cash), a table with a date column and a balance column (.csv,
+  .ods, .xlsx; one column per account works too), or a broker's positions export (the values added up, per
+  account). You see what was read, choose the account it goes to (or a new one) and can correct a single
+  balance before it is saved. Only dates and totals are kept: no holdings, no transactions, and not the file
+  (D-103).
+- **Reminder to update debt balances.** When a debt's typed balance is older than the household's
+  interval (Settings; every 2 months unless changed, or never), Home shows an alert naming the debts, with
+  **Enter balances** and **Remind me in 2 weeks**. Enter balances opens every debt on one screen on Bills >
+  Debts: type the new balance and its date, leave a row empty to keep it. The Debts table marks who keeps each
+  balance: you, or the linked bank (D-105).
+- **A linked card or loan can keep a debt's balance.** More > Bank connection: *Keeps the balance of
+  (debt)*. Every sync writes what the bank says is owed, whatever the account is otherwise used for. No new
+  Plaid product.
+- **Rates, minimum payments and due dates from the bank (optional, paid).** With
+  `HBUDGET_PLAID_LIABILITIES=true` on the server, an owner can turn on Plaid's Liabilities product for a linked
+  bank on More > Bank connection and allow it at the bank's sign-in. Every sync then reads the rate, the
+  minimum payment and the next due date of its cards and loans; a debt whose balance the account keeps takes
+  the rate and the minimum. Off by default at both levels. Plaid bills it per bank and month until the bank is
+  unlinked (docs/PLAID.md, D-106).
+- **Promo rate ending.** A debt whose promo rate ends within 60 days shows on Home, as an alert when
+  the interest is deferred and as a note otherwise.
+- **Paid by this bill.** Editing a debt on Bills > Debts can link the recurring bill that pays it, so
+  the estimate between balance updates works without a visit to Bill setup.
+- **Labels on bills.** A recurring item can carry a few short labels of your own ("blue card", "pays
+  itself down"), set on Bills > Bill setup; every row of it shows them as chips on Bills and in the Home
+  check-in. One row can have its own as well ("paid early"), under Change on Bills. A row paid with a credit
+  card shows "on (card name)" by itself. Labels are free text: at most 5, 24 characters each (D-104).
+- **Nothing to schedule.** Tick it on a recurring item no payment is set up for, such as an allowance
+  its charges pay down: its rows stay out of the "not scheduled" alert, the summary's count and the check-in
+  list, and read "Nothing to do" on Bills.
+- **API and MCP:** bills carry `labels` and `needs_scheduling`, series `labels` and `no_schedule`;
+  `set_bill_labels` and `POST /api/v1/bills/{id}/labels` set a row's labels; `set_series_details` and
+  `PATCH /api/v1/series/{id}` take `labels` and `no_schedule` (the PATCH takes `debt` now too).
+- **API and MCP:** `GET /api/v1/investments` and `get_investments`; `POST /api/v1/investments/{id}/balance` and
+  `set_investment_balance` note a balance for a date.
+- **Bills every few months.** *Repeats* on Bills > Bill setup has **Every 2 months**, **Every 3 months
+  (quarterly)** and **Every 6 months**; any other number goes in "Every N weeks or months" with *Monthly*. The
+  months are counted from the first date: a first date in December gives December, March, June and September.
+  One recurring item replaces a row per quarter, so a price change, the status and the notes are set once
+  (D-099).
+- The bill-system file and the simple CSV of bills take `interval` for monthly items (the CSV also takes the
+  cadence `quarterly`). A spreadsheet import recognises a bill that comes every 2, 3, 4 or 6 months.
+- **API and MCP:** `POST /api/v1/series` and the `add_series` tool add a recurring item; `list_series` also
+  returns `interval` and `start`.
+
+- **Bank connection (Plaid): a balance gap is explained.** When the bank's balance differs from the checkbook's
+  after a sync, the sync result, More > Bank connection and the check-in say why: the new postings to review
+  make up the difference, pending transactions do, or Plaid has not sent a posting yet (sync again later).
+  "Nothing new" alone no longer hides a deposit that is in the balance but not yet delivered (D-100).
+- **Bank connection (Plaid): "Refresh from the bank now"**, for servers that turn it on with
+  `HBUDGET_PLAID_REFRESH=true`. It asks Plaid to fetch from the bank at once and then syncs, so a deposit that
+  posted this morning does not have to wait for Plaid's own schedule. This is a Plaid add-on charged per
+  request: off by default, limited to one request an hour per bank, and audited (D-101, docs/PLAID.md).
+- **API and MCP:** `POST /api/v1/bank-connection/sync` and the `sync_bank` tool sync with the linked banks
+  (with `refresh` where the server allows it), so an agent can bring the postings in for the check-in.
+- **API and MCP:** `GET /api/v1/bank-connection` and the `get_bank_connection` tool return the linked banks, the
+  last sync and that balance comparison, so an agent can answer "why is the app's balance different from my
+  bank's?".
+
+### Upgrade notes
+- Migrations 0018 to 0021 add columns only: which investment account or debt a linked account keeps the
+  balance of, labels on recurring items and rows, and the "nothing to schedule" switch. Backups made from here on
+  can hold investment accounts, labels and the reminder interval, which older releases cannot restore.
+- Migration 0017 adds a column for the time of the last on-demand refresh per linked bank.
+- Migration 0016 adds a small table for pending bank transactions (amount and date only), used for the balance
+  explanation above. It stays empty without the Plaid connection.
+- Migration 0015. "Every N" used to be stored but ignored for everything except weekly items. An item that
+  still carries such a number keeps its present dates: the number is set back to 1. A bill-system file or
+  backup that has `interval` on a monthly item is now read as every N months.
+
+### Changed
+- **A bank sync leads straight to its review.** After **Sync now** on More > Bank connection, the result has a
+  **Review it now** link that opens Money > Uploads with that upload's dry run already open. A dry run, and the
+  report after Apply, are now scrolled into view with focus on their heading, so there is no need to know to
+  scroll and a keyboard or screen reader lands there too. A link to an upload that is no longer waiting says so.
+- **Editing a debt keeps the date of its balance** unless the balance changes. Before, saving any change (a
+  new rate, a new name) dated the balance today, so it looked freshly checked.
+
+### Fixed
+- **Home no longer scrolls sideways on a phone** when the reminder to update debt balances is showing: its two
+  buttons now sit under the text.
+
 ## 1.0.0 - 2026-11-16
 
 ### Changed

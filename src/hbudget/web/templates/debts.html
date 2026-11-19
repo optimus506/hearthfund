@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="card" aria-labelledby="h-d">
-  <h2 id="h-d">Debts and accounts</h2>
-  <p class="muted small">Type in each balance from the statement. Do not enter card or account numbers.</p>
+  <div class="section-head">
+    <h2 id="h-d">Debts and accounts</h2>
+    <div class="row-actions"><button class="btn" id="dQuickOpen" type="button" aria-expanded="false" hidden>Update balances</button></div>
+  </div>
+  <p class="muted small">Type in each balance from the statement. Do not enter card or account numbers. With the optional bank connection, a linked card or loan can keep its debt's balance by itself (More &gt; Bank connection).</p>
+  <div id="debtRemind"></div>
+  <div id="debtQuick" hidden></div>
   <div id="debtTable"></div>
   <form class="form" id="debtForm">
     <input type="hidden" id="dId">
@@ -18,6 +23,8 @@
     <div class="field"><label for="dDeferred"><input id="dDeferred" type="checkbox"> Deferred interest</label></div>
     <div class="field"><label for="dMortgage"><input id="dMortgage" type="checkbox"> This is the mortgage</label></div>
     <div class="field"><label for="dInclude"><input id="dInclude" type="checkbox" checked> Include in the payoff plan</label></div>
+    <div class="field" id="dPaidByField" hidden><label for="dPaidBy">Paid by this bill</label><select id="dPaidBy"><option value="">None</option></select>
+      <small class="muted">Its reconciled payments move the estimate between balance updates.</small></div>
     <div class="field"><button class="btn primary" id="dSave" type="submit">Add debt</button></div>
     <div class="field"><button class="btn" id="dCancel" type="button" hidden>Cancel</button></div>
   </form>

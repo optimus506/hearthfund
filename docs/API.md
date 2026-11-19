@@ -54,12 +54,15 @@ versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05.
 | Tool | Token | What it does |
 |---|---|---|
 | `get_summary` | read | Checkbook balance, forecast low and date, year end, bills due soon with no status, alerts |
+| `get_bank_connection` | read | The optional Plaid connection: linked banks, last sync, problems, postings waiting, and the bank's balance next to the checkbook's with the reason for a difference (`agree`, `postings`, `pending`, `unexplained`) and a plain-words `message` |
+| `sync_bank` | write | Sync with the banks linked through Plaid: new postings become one waiting bank upload (reconcile it as usual), card purchases go to the Card page. `refresh: true` asks the bank first (paid Plaid add-on; only when `get_bank_connection` says `can_refresh`) |
 | `get_paydays` | read | Money left before the next payday, the bills due before it, the pay periods after it |
 | `list_upcoming_bills` | read | Open rows due in the next `days` (late ones included), status and balance after each |
 | `get_forecast` | read | The balance after each date for the next `days`; the low in that window and over the whole forecast |
 | `can_we_afford` | read | Adds a purchase or extra income to the forecast without saving it: yes / tight / no |
 | `list_expected_items` | read | Money expected to come or go that the bank has not posted |
 | `get_debts` | read | Debts and loans (not checking or savings), with any promo's end date, APR after and deferred interest |
+| `get_investments` | read | Investment accounts: balance, where it comes from (`bank` or `typed`), its change over a month, a quarter, a year and since the start, the total and the total by date. A summary: a change includes money paid in or out |
 | `get_payoff_plan` | read | Debt-free date with avalanche or snowball and an optional extra each month; promo verdicts and warnings |
 | `get_report` | read | Money in and out by group, planned or actual |
 | `get_goals` | read | Goals and progress: emergency fund, savings targets, debt-free countdown |
@@ -76,6 +79,7 @@ versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05.
 | `set_purchase_category` | write | Move one purchase to a category; re-sorting leaves it there (`null`: sort it automatically again) |
 | `add_expected_item` | write | Record money expected on a date (it then counts in the forecast) |
 | `set_bill_note` | write | A short note on one bill or row (`bill_id`, `note`; empty clears it), shown on the Bills page |
+| `set_bill_labels` | write | The short labels of one bill or row (`bill_id`, `labels`: at most 5, 24 characters each; an empty list clears them), shown as chips after the labels of its recurring item |
 | `set_bill_status` | write | Mark a bill autopay, manual (scheduled) or none |
 | `set_expected_item_status` | write | Mark an expected item done or open |
 | `change_row_amount` | write | Change one open row's amount (`expected_amount`: the amount you last read) |
@@ -86,12 +90,13 @@ versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05.
 | `move_row` | write | List a row right after another (such as the payday that funds it) |
 | `list_uploads` | read | Uploaded exports and the saved column layouts |
 | `upload_bank_export` | write | Upload a CSV, OFX or QFX export as text (about 1 MB at most); `mapping` and `save_as` for a new CSV layout |
-| `reconcile_preview` | write | Dry run: auto matches, proposals P1, P2, ..., unknown lines and a `fingerprint` |
-| `reconcile_apply` | write | Apply the dry run with `accept: {"P1": "clear" \| "reduce"}`, all or nothing |
+| `reconcile_preview` | write | Dry run: auto matches, proposals P1, P2, ..., unknown lines and a `fingerprint`; a money-out line under `proposals` or `unknown` has `candidates`, the open rows the person may say it paid |
+| `reconcile_apply` | write | Apply the dry run with `accept: {"P1": "clear" \| "reduce"}`, all or nothing. `assign: {"<bank line id>": {"clear": ["<row id>"], "reduce": "<row id>"}}` is the person's own choice of rows for a line: they may total less than the payment, or more only when `reduce` names one larger row that keeps the rest |
 | `upload_removal` | write | How many postings, over which dates, deleting an upload with its postings would remove |
 | `delete_upload` | write | Hide an upload (its postings stay in the history); `with_postings: true` deletes a waiting, unreconciled one and its postings |
 | `list_series` | read | Recurring income, bills and spending lines, and the credit cards that can pay one |
-| `set_series_details` | write | Change a recurring item's card, status, group or notes; its rows keep their amounts |
+| `add_series` | write | Add a recurring income, bill or spending line (cadence, first date, `interval` for every N weeks or months); returns its id and first dates |
+| `set_series_details` | write | Change a recurring item's card, debt link, status, group, notes, `labels` (chips every row of it shows) or `no_schedule` (true: nothing is scheduled for it, so its rows stay out of the "not scheduled" alert); its rows keep their amounts |
 | `list_rules` | read | Payee rules in the order they are tried, and what a rule can clear |
 | `test_rule` | read | Which rule a bank line (description, signed amount) would match |
 | `add_rule` | write | Add a payee rule, last or `before` another rule |
@@ -101,6 +106,7 @@ versions 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05.
 | `set_series_amount` | write | A recurring item's new amount from a date on (or only up to `to_date`); returns the rows it changed; `dry_run` shows them without saving |
 | `set_series_seasonal` | write | Amounts by month of the year (`{"7-10": 37500, "12-6": 22500}`), with an optional dry run |
 | `update_debt` | write | Change some of a debt's figures; `get_debts` flags balances older than 35 days (`stale`) |
+| `set_investment_balance` | write | Note an investment account's balance for a date (today when left out); an older date fills the history |
 | `list_changes` | write | What changed after a cursor (`since`): when, who, action, item id; `get_summary` has `last_change` |
 | `list_reconciliations` | read | Applied reconciliations, newest first |
 | `get_reconciliation` | read | What one reconciliation did: each bank line auto-matched, proposed (and the decision), tracked or unknown with the reason |
@@ -126,8 +132,11 @@ the forecast. Errors are
 |---|---|---|
 | `GET /api/v1/me` | read | The token, its household and the role it acts with |
 | `GET /api/v1/summary` | read | |
+| `GET /api/v1/bank-connection` | read | As `get_bank_connection`. `{"available": false, ...}` on a server without the Plaid connection |
+| `POST /api/v1/bank-connection/sync` | write | As `sync_bank`; body `{"refresh"?: true}` |
 | `GET /api/v1/bills?days=30` | read | `days` 1 to 2000 |
 | `POST /api/v1/bills/{id}/note` | write | `{"note"}` (as `set_bill_note`) |
+| `POST /api/v1/bills/{id}/labels` | write | `{"labels": [...]}` (as `set_bill_labels`) |
 | `POST /api/v1/bills/{id}/status` | write | `{"status": "autopay" \| "manual" \| null}` |
 | `GET /api/v1/forecast?days=90` | read | `low` and `low_date` are for those days; `horizon_low` for the whole forecast |
 | `GET /api/v1/paydays` | read | |
@@ -136,6 +145,7 @@ the forecast. Errors are
 | `POST /api/v1/expected` | write | `{"label", "amount", "direction", "date"}` |
 | `POST /api/v1/expected/{id}/status` | write | `{"status": "open" \| "done"}` |
 | `GET /api/v1/debts` | read | |
+| `GET /api/v1/investments` | read | Balances, changes and the total by date (docs: Money > Investments) |
 | `POST /api/v1/debts/payoff` | read | `{"method": "avalanche" \| "snowball", "extra": 0, "include_mortgage": false}` |
 | `GET /api/v1/report?view=planned` | read | `planned`, `actual` (last 12 full months) or `recent` (last 2) |
 | `GET /api/v1/goals` | read | |
@@ -159,11 +169,12 @@ the forecast. Errors are
 | `GET /api/v1/uploads` | read | Uploads and saved layouts |
 | `POST /api/v1/uploads` | write | Multipart form: `file` (CSV, OFX or QFX), `kind` (`bank` or `card`), `profile_id`?, `mapping`? (JSON), `save_as`? |
 | `POST /api/v1/uploads/{id}/preview` | write | Reconcile dry run (nothing is saved) |
-| `POST /api/v1/uploads/{id}/apply` | write | `{"fingerprint", "accept": {"P1": "clear"}}`; 409 when anything changed since the preview |
+| `POST /api/v1/uploads/{id}/apply` | write | `{"fingerprint", "accept": {"P1": "clear"}, "assign": {"<bank line id>": ["<row id>"]}}` (`assign` as in `reconcile_apply`; a plain list clears the rows); 409 when anything changed since the preview |
 | `GET /api/v1/uploads/{id}/removal` | write | What deleting it with its postings would remove: `can_delete`, `bank_postings`, `card_purchases`, `first`, `last` |
 | `DELETE /api/v1/uploads/{id}` | write | Hides it; its postings stay in the history. `?with_postings=true` deletes a waiting, unreconciled one and its postings |
 | `GET /api/v1/series` | read | Recurring items and the credit cards that can pay them |
-| `PATCH /api/v1/series/{id}` | write | Any of `{"card", "status", "group", "notes"}`; row amounts are kept |
+| `POST /api/v1/series` | write | `{"name", "kind", "amount", "schedule": {"cadence", "start", "interval"?, "day"?, "days"?, "month"?, "end"?, "weekend"?}, "status"?, "card"?, "debt"?, "funded_by"?, "group"?, "notes"?}`. Monthly with `interval` 3 is every 3 months, counted from `start`. Returns `{"id", "next_dates"}` |
+| `PATCH /api/v1/series/{id}` | write | Any of `{"card", "debt", "status", "group", "notes", "labels", "no_schedule"}`; row amounts are kept |
 | `GET /api/v1/rules` | read | Payee rules in order |
 | `POST /api/v1/rules/test` | read | `{"description", "amount"}` (signed like the bank: money out is negative) |
 | `POST /api/v1/rules` | write | `{"name", "kind", "contains"?, "regex"?, "direction"?, "min_amount"?, "max_amount"?, "targets"?, "card"?, "note"?, "before"?}` |
@@ -173,6 +184,7 @@ the forecast. Errors are
 | `POST /api/v1/series/{id}/amount` | write | `{"amount", "from_date", "to_date"?, "expected_amount"?, "dry_run"?}` |
 | `POST /api/v1/series/{id}/seasonal` | write | `{"months": {"7-10": 37500}, "from_date"?, "dry_run"?}` |
 | `PATCH /api/v1/debts/{id}` | write | Any of balance, apr_bp, payment, minimum, limit, as_of, promo_ends, apr_after_bp, deferred_interest, include_in_payoff, notes; `expected_balance`? |
+| `POST /api/v1/investments/{id}/balance` | write | `{"balance", "as_of"?}` |
 | `GET /api/v1/changes?since=0&limit=100` | write | Changes after the audit entry `since`, oldest first, and a `cursor` |
 | `GET /api/v1/reconciliations` | read | |
 | `GET /api/v1/reconciliations/{id}` | read | Each bank line's outcome (`details` is null for ones applied before 0.14) |

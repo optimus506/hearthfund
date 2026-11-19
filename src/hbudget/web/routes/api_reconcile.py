@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import date
 from typing import Annotated, Any, Literal
@@ -245,11 +246,36 @@ class PreviewBody(Body):
     upload_id: Annotated[str, Field(max_length=60)]
 
 
+RowId = Annotated[str, Field(max_length=120)]
+
+
+class AssignBody(Body):
+    """The rows a bank line paid, chosen by the person: `clear` in full, `reduce` one larger row by the rest."""
+    clear: Annotated[list[RowId], Field(max_length=reconcile.PICK_MAX)] = Field(default_factory=list)
+    reduce: RowId | None = None
+
+
+# a bank line id to the rows it paid; a plain list of row ids means "clear these"
+AssignMap = dict[Annotated[str, Field(max_length=120)],
+                 AssignBody | Annotated[list[RowId], Field(max_length=reconcile.PICK_MAX)]]
+
+
 class ApplyBody(Body):
     upload_id: Annotated[str, Field(max_length=60)]
     fingerprint: Annotated[str, Field(max_length=64)] | None = None
     accept: dict[Annotated[str, Field(max_length=20)], Literal['clear', 'reduce']] = Field(default_factory=dict,
                                                                                           max_length=200)
+    assign: AssignMap = Field(default_factory=dict, max_length=200)
+
+
+def to_assign(raw: Mapping[str, Any] | None) -> dict[str, reconcile.Assign]:
+    out: dict[str, reconcile.Assign] = {}
+    for tid, a in (raw or {}).items():
+        if isinstance(a, AssignBody):
+            out[tid] = reconcile.Assign(tuple(a.clear), a.reduce or None)
+        else:
+            out[tid] = reconcile.Assign(tuple(a))
+    return out
 
 
 FILE_PROBLEMS = frozenset({'chain_break', 'empty', 'bad_order'})
@@ -297,8 +323,11 @@ def preview(m: Member, upload_id: str) -> dict[str, Any]:
     return out
 
 
-def apply(m: Member, upload_id: str, fp: str | None, accept: dict[str, Any]) -> dict[str, Any]:
-    """Apply a dry run, all or nothing: 409 when the budget or the proposals changed since the preview."""
+def apply(m: Member, upload_id: str, fp: str | None, accept: dict[str, Any],
+          assign: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Apply a dry run, all or nothing: 409 when the budget or the proposals changed since the preview. `assign`
+    is the person's own choice of rows for a bank line (ApplyBody.assign, already validated)."""
+    chosen = to_assign(assign)
     with transaction(m.conn, immediate=True):
         version = repo.budget_version(m.conn, m.hid)
         b, prepared, result = _match(m, upload_id)
@@ -308,7 +337,7 @@ def apply(m: Member, upload_id: str, fp: str | None, accept: dict[str, Any]) -> 
         unknown = [k for k in accept if k not in ids]
         if unknown:
             raise ApiError(400, 'unknown_proposal', 'Unknown proposal id(s): %s.' % ', '.join(sorted(unknown)))
-        applied = core(lambda: reconcile.apply(b, result, accept, today=m.today))
+        applied = core(lambda: reconcile.apply(b, result, accept, today=m.today, assign=chosen))
         report = reconcile.report(applied, dry_run=False, today=m.today)
         repo.edit_budget(m.conn, m.hid, lambda _b: applied.budget, user_id=m.user_id, action='reconcile.apply',
                          row_id=upload_id, expected_version=version)
@@ -318,7 +347,8 @@ def apply(m: Member, upload_id: str, fp: str | None, accept: dict[str, Any]) -> 
             through=prepared.through, new_balance=applied.budget.start_balance,
             result={'cleared': [{'row': c.row_id, 'txn': c.txn_id, 'how': c.how} for c in applied.cleared],
                     'accepted': sorted(accept), 'undo': _undo_data(b, applied.budget),
-                    'details': _details(b, prepared, result, accept)}, report_md=report)
+                    'assigned': {tid: {'clear': list(a.clear), 'reduce': a.reduce} for tid, a in chosen.items()},
+                    'details': _details(b, prepared, result, accept, chosen)}, report_md=report)
         repo.set_upload_status(m.conn, m.hid, upload_id, 'imported',
                                'reconciled through %s' % prepared.through.isoformat())
     return {'id': rec_id, 'report_md': report, 'balance': applied.budget.start_balance,
@@ -326,7 +356,7 @@ def apply(m: Member, upload_id: str, fp: str | None, accept: dict[str, Any]) -> 
 
 
 def _details(b: Budget, prepared: reconcile.Prepared, result: reconcile.ReconcileResult,
-             accept: dict[str, Any]) -> dict[str, Any]:
+             accept: dict[str, Any], chosen: Mapping[str, reconcile.Assign] | None = None) -> dict[str, Any]:
     """What the reconciliation saw and decided, kept for get_reconciliation (#93): every new bank line with what
     happened to it (auto-matched, a proposal and its decision, tracked by a rule, or unknown and why)."""
     txns = {t.id: t for t in prepared.new}
@@ -341,11 +371,17 @@ def _details(b: Budget, prepared: reconcile.Prepared, result: reconcile.Reconcil
         r = rows.get(rid)
         return {'row': rid, 'name': r.name if r else '', 'due': views.iso(r.due_date) if r else None,
                 'amount': r.amount if r else None}
+    chosen = chosen or {}
     return {
         'balance_before': b.start_balance, 'balance_checked': prepared.balance_checked,
+        # the lines the person chose rows for (their proposals, if any, show as "chose rows")
+        'assigned': [{**line(tid), 'rows': [row(r) for r in a.clear], 'reduced': row(a.reduce) if a.reduce else None}
+                     for tid, a in chosen.items()],
         'auto': [{**line(a.txn_id), **row(a.row_id), 'rule': a.rule_id, 'took': a.amount} for a in result.auto],
         'proposals': [{'id': p.id, **line(p.txn_id), 'rows': [row(r) for r in p.row_ids], 'kind': p.kind,
-                       'note': p.note, 'decision': accept.get(p.id) or 'skipped'} for p in result.proposals],
+                       'note': p.note,
+                       'decision': accept.get(p.id) or ('chose rows' if p.txn_id in chosen else 'skipped')}
+                      for p in result.proposals],
         'tracked': [{**line(t.txn_id), 'rule': t.rule_id, 'kind': str(t.kind)} for t in result.tracked],
         'unknown': [{**line(u.txn_id), 'reason': u.reason} for u in result.unknown],
     }
@@ -417,7 +453,7 @@ async def reconcile_preview(body: PreviewBody, request: Request, m: Editor) -> d
 
 @router.post('/reconcile/apply')
 async def reconcile_apply(body: ApplyBody, request: Request, m: Editor) -> dict[str, Any]:
-    return await time_limited(request, lambda: apply(m, body.upload_id, body.fingerprint, body.accept))
+    return await time_limited(request, lambda: apply(m, body.upload_id, body.fingerprint, body.accept, body.assign))
 
 
 @router.get('/reconciliations')

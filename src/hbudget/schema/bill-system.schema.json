@@ -111,7 +111,7 @@
     "alert_snoozes": {
       "type": "array",
       "maxItems": 500,
-      "description": "Repeating-payee alerts the household set aside on Home; each comes back when the payee posts in a later month",
+      "description": "Alerts the household set aside on Home. A repeating-payee alert comes back when the payee posts in a later month; \"debt_balances\" (payee \"until\") holds the day the reminder to update debt balances comes back",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -124,7 +124,8 @@
           "alert": {
             "enum": [
               "unmatched_recurring",
-              "unbudgeted"
+              "unbudgeted",
+              "debt_balances"
             ]
           },
           "payee": {
@@ -136,7 +137,8 @@
             "type": "string",
             "format": "date"
           }
-        }
+        },
+        "description": ""
       }
     },
     "backup": {
@@ -352,7 +354,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 52,
-          "description": "weekly only: every N weeks"
+          "description": "weekly: every N weeks; monthly: every N months, counted from start (3 is quarterly)"
         },
         "day": {
           "type": "integer",
@@ -563,6 +565,21 @@
         "notes": {
           "type": "string",
           "maxLength": 2000
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24
+          },
+          "maxItems": 5,
+          "description": "Short free-text labels shown as chips on its rows, e.g. [\"blue card\"]"
+        },
+        "no_schedule": {
+          "type": "boolean",
+          "default": false,
+          "description": "Nothing to schedule for this line (e.g. an allowance paid down by its charges): its rows stay out of the \"not scheduled\" alert"
         }
       }
     },
@@ -589,12 +606,13 @@
             "loan",
             "mortgage",
             "retirement_loan",
+            "investment",
             "other"
           ]
         },
         "balance": {
           "$ref": "#/$defs/money",
-          "description": "Amount owed (debts) or held."
+          "description": "Amount owed (debts) or held (checking, savings, investment)."
         },
         "apr": {
           "$ref": "#/$defs/percent"
@@ -636,8 +654,8 @@
         },
         "history": {
           "type": "array",
-          "maxItems": 120,
-          "description": "past balances, oldest first: [as of date, balance]",
+          "maxItems": 400,
+          "description": "past balances, oldest first: [as of date, balance]. Debts keep 120; an investment account keeps up to 400 (daily, then weekly, then monthly)",
           "items": {
             "type": "array",
             "prefixItems": [
@@ -850,6 +868,13 @@
               }
             }
           }
+        },
+        "debt_update_days": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 366,
+          "default": 61,
+          "description": "Remind to update debt balances that are older than this many days; 0 turns the reminder off"
         }
       }
     },
@@ -1235,6 +1260,16 @@
             }
           ],
           "description": "Occurrence date before the weekend shift (series rows); with series it identifies the occurrence."
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 24
+          },
+          "maxItems": 5,
+          "description": "This row's own labels, shown after its recurring item's"
         }
       }
     },

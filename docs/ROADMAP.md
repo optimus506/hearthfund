@@ -115,6 +115,7 @@ Sizes: S = under a day, M = a few days, L = a week or more.
       Plaid and a household owner turns it on; a sync becomes an ordinary upload, so the check-in and
       reconciliation are unchanged. Manual sync, checking account and card (L)
 - [x] Daily sync that only stores; the check-in brings the postings in (D-092)
+- [x] A linked account can keep an investment balance up to date for Money > Investments (D-102)
 
 ## Going public: 1.0
 

@@ -9,7 +9,7 @@ from .dates import clamp_day, shift_weekend
 from .models import Cadence, Schedule, Series
 from .money import Cents
 
-__all__ = ['Occurrence', 'amount_for', 'dates', 'occurrences']
+__all__ = ['Occurrence', 'amount_for', 'dates', 'first_month', 'occurrences']
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,6 +17,13 @@ class Occurrence:
     nominal: date      # before the weekend shift: decides range, month and identity
     actual: date       # after the weekend shift: stored as the row's due date
     index: int         # occurrence number counted from schedule.start (0 = first)
+
+
+def first_month(s: Schedule) -> int:
+    """Month of a monthly schedule's first occurrence, as year * 12 + month - 1: the start's month, or the next
+    one when the day of the month has already passed at the start. An every-N-months schedule counts from it."""
+    index = s.start.year * 12 + s.start.month - 1
+    return index if clamp_day(s.start.year, s.start.month, s.day or s.start.day) >= s.start else index + 1
 
 
 def _nominal_dates(s: Schedule) -> Iterator[date]:
@@ -32,12 +39,10 @@ def _nominal_dates(s: Schedule) -> Iterator[date]:
             d += step
     if s.cadence is Cadence.MONTHLY:
         day = s.day or s.start.day
-        y, m = s.start.year, s.start.month
-        while True:
-            d = clamp_day(y, m, day)
-            if d >= s.start:
-                yield d
-            y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+        index = first_month(s)
+        while True:                              # every `interval` months, counted from the first occurrence
+            yield clamp_day(index // 12, index % 12 + 1, day)
+            index += max(1, s.interval)
     if s.cadence is Cadence.SEMIMONTHLY:
         if not s.days or len(set(s.days)) != 2:
             raise ValueError('semimonthly needs two different days')

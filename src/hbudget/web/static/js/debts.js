@@ -1,10 +1,13 @@
 // Debts tab: balances (typed in by the user) and the payoff plan.
-import { api, $, el, money, money0, longD, shortD, toCents, centsInput, can, say, busy, submitter, arm, table, page } from './api.js';
+import { api, $, el, money, money0, longD, shortD, isoD, toCents, centsInput, can, say, busy, submitter, arm, table, page } from './api.js';
 import { loadSummary } from './summary.js';
 import { lineChart } from './chart.js';
 
 const msg = $('msg');
 let accounts = [];
+let reminder = { days: 0, stale: [], snoozed_until: null };
+let bills = [];              // recurring bills, for "Paid by this bill"
+let quick = new URLSearchParams(location.search).get('update') === '1';
 const F = ['dId', 'dName', 'dKind', 'dBal', 'dApr', 'dPay', 'dMin', 'dLimit', 'dPromo', 'dAfter', 'dDeferred', 'dMortgage', 'dInclude'];
 
 const pct = (bp) => (bp == null ? '' : (bp / 100).toFixed(2) + '%');
@@ -12,10 +15,13 @@ const toBp = (t) => { const s = String(t || '').trim(); if (!s) return null; if 
 
 function renderTable() {
   const box = $('debtTable');
-  const ds = accounts.filter((a) => a.kind !== 'checking' && a.kind !== 'savings');
+  const ds = accounts.filter((a) => !['checking', 'savings', 'investment'].includes(a.kind));
   if (!ds.length) { box.replaceChildren(el('div', { class: 'empty', text: 'No debts yet. Add the first one below. Do not enter card or account numbers.' })); return; }
   const rows = ds.map((d) => el('tr', {},
-    el('td', { text: d.name + (d.is_mortgage ? ' (mortgage)' : '') + (d.include_in_payoff ? '' : ' (not in plan)') }),
+    el('td', {}, d.name + (d.is_mortgage ? ' (mortgage)' : '') + (d.include_in_payoff ? '' : ' (not in plan)'),
+      d.paid_by && d.paid_by.length ? el('small', { class: 'sub', text: 'paid by ' + d.paid_by.join(', ') }) : null,
+      // from the linked bank, where the owner turned Plaid Liabilities on (D-106)
+      d.bank && d.bank.terms && d.bank.terms.next_due ? el('small', { class: 'sub', text: 'next payment due ' + longD(d.bank.terms.next_due) }) : null),
     // between hand updates: the estimate from reconciled payments of the linked bill (#97); the typed balance stays
     el('td', { class: 'r num' }, money(d.balance), d.estimate ? el('small', { class: 'promo', title: money(d.estimate.paid) + ' paid in ' +
       d.estimate.payments + (d.estimate.payments === 1 ? ' payment' : ' payments') + ', about ' + money(d.estimate.interest) + ' interest, since ' + shortD(d.estimate.since),
@@ -27,7 +33,7 @@ function renderTable() {
     el('td', { class: 'r num', text: d.minimum ? money(d.minimum) : '' }),
     el('td', { class: 'r num', text: d.utilization_bp == null ? '' : pct(d.utilization_bp) }),
     el('td', { class: 'r num', text: money(d.monthly_interest) }),
-    el('td', { class: 'num', text: d.as_of ? shortD(d.as_of) + '/' + d.as_of.slice(2, 4) : '' }),
+    el('td', { class: 'num' }, d.as_of ? shortD(d.as_of) + '/' + d.as_of.slice(2, 4) : '', el('small', { class: 'sub' }, keptBy(d))),
     el('td', { class: 'actions' }, can('editor') ? el('div', { class: 'row-actions' },
       el('button', { class: 'btn', type: 'button', text: 'Edit', onclick: () => edit(d) }),
       el('button', { class: 'btn danger', type: 'button', text: 'Delete', onclick: (ev) => {
@@ -44,7 +50,77 @@ function renderTable() {
     { t: 'Used', r: true }, { t: 'Interest/mo', r: true }, 'As of', ''], rows));
 }
 
+// who keeps the balance: a linked bank account, or you (marked when the reminder says it is time, D-105)
+function keptBy(d) {
+  if (d.source === 'bank') return el('span', { class: d.bank.problem ? 'chip warn' : 'chip good', title: d.bank.problem || 'Kept by the linked account at every sync', text: (d.bank.institution || 'bank') + (d.bank.problem ? ' · needs attention' : '') });
+  const old = reminder.stale.includes(d.id);
+  return el('span', { class: old ? 'chip warn' : 'chip', title: old ? 'Typed in; older than the reminder allows' : 'Typed in', text: old ? 'update' : 'you' });
+}
+const every = (days) => { const m = Math.max(1, Math.round(days / 30.5)); return m === 1 ? 'a month' : m + ' months'; };
+
+// the reminder (D-105): typed balances older than the household's interval, with the quick form and "later"
+function renderRemind() {
+  const box = $('debtRemind'), ds = accounts.filter((a) => reminder.stale.includes(a.id));
+  $('dQuickOpen').hidden = !can('editor') || !typed().length;
+  $('dQuickOpen').setAttribute('aria-expanded', String(quick));
+  if (!ds.length || quick) { box.replaceChildren(); return; }
+  if (reminder.snoozed_until) {
+    box.replaceChildren(el('p', { class: 'muted small', text: (ds.length === 1 ? '1 balance is' : ds.length + ' balances are') + ' older than ' + every(reminder.days) + '. The reminder is put off until ' + longD(reminder.snoozed_until) + '.' }));
+    return;
+  }
+  box.replaceChildren(el('div', { class: 'verdict warn' },
+    el('b', { text: (ds.length === 1 ? '1 balance has' : ds.length + ' balances have') + ' not been updated for more than ' + every(reminder.days) + ': ' + ds.map((d) => d.name).join(', ') + '.' }),
+    el('span', { text: 'Look at the statements and enter what is owed now.' }),
+    el('span', { class: 'row-actions' },
+      can('editor') ? el('button', { class: 'btn primary', type: 'button', text: 'Enter balances', onclick: () => { quick = true; render(); } }) : null,
+      can('contributor') ? el('button', { class: 'btn', type: 'button', text: 'Remind me in 2 weeks', onclick: async (ev) => {
+        try { await busy(ev.currentTarget, () => api('PUT', '/accounts/reminder/later', { days: 14 })); await load(); } catch (e) { say(msg, e.message, 'err'); }
+      } }) : null)));
+}
+
+// every typed debt on one screen: the balance now and its date; rows left empty are not changed
+const typed = () => accounts.filter((a) => !['checking', 'savings', 'investment'].includes(a.kind) && a.source !== 'bank');
+function renderQuick() {
+  const box = $('debtQuick'), ds = typed();
+  box.hidden = !quick || !can('editor') || !ds.length;
+  if (box.hidden) { box.replaceChildren(); return; }
+  const today = isoD(new Date());
+  ds.sort((a, b) => (reminder.stale.includes(b.id) - reminder.stale.includes(a.id)) || (a.as_of || '').localeCompare(b.as_of || ''));
+  const form = el('form', { class: 'card inner', 'aria-label': 'Update balances' },
+    el('h3', { text: 'Update balances' }),
+    el('p', { class: 'muted small', text: 'Enter what each statement says is owed now. Leave a row empty to keep its balance.' }),
+    table(['Debt', { t: 'Balance now', r: true }, 'New balance', 'As of'], ds.map((d) => el('tr', { 'data-id': d.id },
+      el('td', {}, d.name, reminder.stale.includes(d.id) ? el('span', { class: 'chip warn label', text: 'time to update' }) : null),
+      el('td', { class: 'r num' }, money(d.balance), el('small', { class: 'sub', text: d.as_of ? 'as of ' + shortD(d.as_of) + '/' + d.as_of.slice(2, 4) : 'no date' })),
+      el('td', {}, el('input', { type: 'text', inputmode: 'decimal', 'aria-label': 'New balance of ' + d.name, 'data-f': 'bal' })),
+      el('td', {}, el('input', { type: 'date', 'aria-label': 'As of, for ' + d.name, 'data-f': 'day', value: today, max: today }))))),
+    el('div', { class: 'row-actions' }, el('button', { class: 'btn primary', type: 'submit', text: 'Save balances' }),
+      el('button', { class: 'btn', type: 'button', text: 'Close', onclick: () => { quick = false; render(); } })));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const items = [];
+    for (const tr of form.querySelectorAll('tr[data-id]')) {
+      const text = tr.querySelector('[data-f=bal]').value.trim();
+      if (!text) continue;
+      const balance = toCents(text);
+      if (Number.isNaN(balance) || balance < 0) { say(form, 'A balance could not be read. Enter it like 1250.00.', 'err'); tr.querySelector('[data-f=bal]').focus(); return; }
+      items.push({ id: tr.dataset.id, balance, as_of: tr.querySelector('[data-f=day]').value || null });
+    }
+    if (!items.length) { say(form, 'Enter at least one balance.', 'err'); return; }
+    try {
+      await busy(submitter(e), () => api('POST', '/accounts/balances', { items }));
+      quick = false; await load(); say(msg, items.length + (items.length === 1 ? ' balance' : ' balances') + ' updated.', 'ok');
+    } catch (err) { say(form, err.message, 'err'); }
+  });
+  box.replaceChildren(form);
+}
+$('dQuickOpen').addEventListener('click', () => { quick = !quick; render(); if (quick) setTimeout(() => { const i = $('debtQuick').querySelector('input'); if (i) i.focus(); }, 0); });
+function render() { renderRemind(); renderQuick(); renderTable(); }
+
 function edit(d) {
+  $('dPaidByField').hidden = false;
+  $('dPaidBy').replaceChildren(el('option', { value: '', text: 'None' }), ...bills.map((s) => el('option', { value: s.id, text: s.name })));
+  $('dPaidBy').value = (bills.find((s) => s.debt === d.id) || { id: '' }).id; $('dPaidBy').dataset.was = $('dPaidBy').value;
   $('dId').value = d.id; $('dName').value = d.name; $('dKind').value = d.kind; $('dBal').value = centsInput(d.balance);
   $('dApr').value = d.apr_bp == null ? '' : (d.apr_bp / 100).toFixed(2); $('dPay').value = centsInput(d.payment);
   $('dMin').value = d.minimum ? centsInput(d.minimum) : ''; $('dLimit').value = d.limit == null ? '' : centsInput(d.limit);
@@ -54,7 +130,7 @@ function edit(d) {
 }
 function reset() {
   for (const f of F) { const n = $(f); if (n.type === 'checkbox') n.checked = f === 'dInclude'; else if (n.tagName !== 'SELECT') n.value = ''; }
-  $('dKind').value = 'credit_card'; $('dSave').textContent = 'Add debt'; $('dCancel').hidden = true;
+  $('dKind').value = 'credit_card'; $('dSave').textContent = 'Add debt'; $('dCancel').hidden = true; $('dPaidByField').hidden = true;
 }
 $('dCancel').addEventListener('click', reset);
 $('debtForm').addEventListener('submit', async (e) => {
@@ -70,7 +146,11 @@ $('debtForm').addEventListener('submit', async (e) => {
   if (/\d{6,}/.test(body.name)) { say(form, 'Leave card and account numbers out of the name.', 'err'); return; }
   try {
     const id = $('dId').value;
-    await busy(submitter(e), () => (id ? api('PUT', '/accounts/' + encodeURIComponent(id), body) : api('POST', '/accounts', body)));
+    const paidBy = $('dPaidBy').value, relink = id && paidBy !== $('dPaidBy').dataset.was;
+    await busy(submitter(e), async () => {
+      await (id ? api('PUT', '/accounts/' + encodeURIComponent(id), body) : api('POST', '/accounts', body));
+      if (relink) await api('PUT', '/accounts/' + encodeURIComponent(id) + '/paid-by', { series_id: paidBy || null });
+    });
     reset(); say(form, 'Saved.', 'ok'); await load();
   } catch (err) { say(form, err.message, 'err'); }
 });
@@ -173,8 +253,9 @@ const replan = () => {
 };
 for (const id of PLAN) { $(id).addEventListener('input', replan); $(id).addEventListener('change', replan); }
 async function load() {
-  accounts = (await api('GET', '/accounts')).accounts;
-  renderTable(); await renderPlan(); loadSummary();
+  const [ac, sr] = await Promise.all([api('GET', '/accounts'), api('GET', '/series')]);
+  accounts = ac.accounts; reminder = ac.reminder; bills = sr.series.filter((s) => s.kind === 'bill');
+  render(); await renderPlan(); loadSummary();
 }
 reset();
 load().catch((e) => say(msg, e.message, 'err'));

@@ -40,6 +40,7 @@ from hbudget.core import rules as rules_core
 from hbudget.core.dates import add_months
 from hbudget.core.models import AccountKind, Budget, Kind, RowState, Status
 from hbudget.core.payoff import NOT_DEBTS
+from hbudget.core.recurrence import occurrences
 from hbudget.core.textmask import mask
 from hbudget.db import repo, tokens, users
 from hbudget.db.tokens import Token
@@ -64,6 +65,8 @@ class Caller:
     token: Token
     time_limit: float = 10.0       # seconds for an upload or a reconcile (settings.time_limit_seconds)
     max_upload: int = 10 << 20     # bytes (settings.max_upload_bytes)
+    plaid_on: bool = False         # the server has the optional Plaid connection (settings.plaid is not "off")
+    state: Any = None              # the app's state: the Plaid client and key live there
 
     @contextmanager
     def writing(self) -> Iterator[None]:
@@ -123,7 +126,7 @@ def authenticate(request: Request, conn: Conn, min_role: str = 'viewer') -> Call
     m = Member(Auth(user, '', ''), tok.household_id, role, household, conn,
                effective_today(conn, tok.household_id, today_of(request)))
     s = request.app.state.settings
-    c = Caller(m, tok, s.time_limit_seconds, s.max_upload_bytes)
+    c = Caller(m, tok, s.time_limit_seconds, s.max_upload_bytes, s.plaid != 'off', request.app.state)
     require(c, min_role)
     return c
 
@@ -157,7 +160,8 @@ def _bill(r: dict[str, Any]) -> dict[str, Any]:
     money in as negative). The id keeps the scheduled date; `due` is the date after any weekend move."""
     return {'id': r['id'], 'name': r['name'], 'kind': r['kind'], 'amount': abs(r['amount']),
             'direction': 'in' if r['amount'] < 0 else 'out', 'due': r['due'], 'status': r['status'],
-            'late': r['late'], 'card': r['card'], 'balance_after': r['balance'], 'note': r['note']}
+            'late': r['late'], 'card': r['card'], 'balance_after': r['balance'], 'note': r['note'],
+            'labels': r['labels'], 'needs_scheduling': not r['no_schedule']}
 
 
 def op_me(c: Caller) -> dict[str, Any]:
@@ -173,6 +177,36 @@ def op_summary(c: Caller) -> dict[str, Any]:
             'end_date', 'year_end', 'cushion', 'unscheduled', 'expected_open', 'alerts')
     return {**{k: s[k] for k in keys if k in s}, 'budget_version': repo.budget_version(c.m.conn, c.m.hid),
             'last_change': repo.last_audit_id(c.m.conn, c.m.hid)}
+
+
+def op_bank_connection(c: Caller) -> dict[str, Any]:
+    """The optional Plaid connection: linked banks, the last sync, and the bank's balance next to the checkbook's
+    with what explains a difference. `available` is false when the server runs without it (bank files only)."""
+    if not c.plaid_on:
+        return {'available': False, 'enabled': False, 'banks': [], 'balance': None}
+    from hbudget.web.routes import plaid  # loaded only on a server that has the connection
+
+    return plaid.summary(c.state, c.m)
+
+
+def op_sync_bank(c: Caller, refresh: bool = False) -> dict[str, Any]:
+    """Sync with the linked banks, as the check-in's button does: new postings become one waiting bank upload
+    (reconcile it with reconcile_preview and reconcile_apply) and card purchases go to the Card page."""
+    require(c, 'editor')
+    if not c.plaid_on:
+        raise ApiError(409, 'plaid_off', 'This server has no bank connection. Upload a bank export instead.')
+    from hbudget.web.routes import plaid  # loaded only on a server that has the connection
+
+    with c.writing():
+        out = plaid.run_sync(c.state, c.m, refresh_first=refresh)
+    bank = out['bank']
+    return {'added': out['added'], 'pending': out['pending'], 'changed': out['changed'], 'removed': out['removed'],
+            'not_ready': out['not_ready'],
+            'problems': [{'institution': p['institution'], 'message': p['message'], 'sign_in_again': p['relink']}
+                         for p in out['problems']],
+            'bank_upload': {'id': bank['id'], 'rows': bank['rows'], 'note': bank['note']} if bank else None,
+            'card_uploads': len(out['cards']), 'balance': out['balance'],
+            **({'refreshed': out['refreshed'], 'refresh_notes': out['refresh_notes']} if refresh else {})}
 
 
 def op_changes(c: Caller, since: int = 0, limit: int = 100) -> dict[str, Any]:
@@ -286,6 +320,12 @@ def op_row_note(c: Caller, bill_id: str, note: str) -> dict[str, Any]:
         return hh.row_note(bill_id, hh.RowNoteBody(note=note), c.m)
 
 
+def op_row_labels(c: Caller, bill_id: str, labels: list[str]) -> dict[str, Any]:
+    require(c, 'contributor')
+    with c.writing():
+        return hh.row_labels(bill_id, hh.RowLabelsBody(labels=labels), c.m)
+
+
 def op_debts(c: Caller) -> dict[str, Any]:
     """Debts and loans only (checking and savings accounts are not debts)."""
     keys = ('id', 'name', 'kind', 'balance', 'apr_bp', 'payment', 'minimum', 'limit', 'as_of', 'promo_ends',
@@ -328,6 +368,25 @@ def op_update_debt(c: Caller, debt_id: str, fields: dict[str, Any], expected_bal
         raise ApiError(400, 'invalid', 'Refused: %s' % e) from None
     with c.writing():
         return hh.account_edit(debt_id, body, c.m)
+
+
+# ---------------------------------------------------------------- investments (D-102)
+
+def op_investments(c: Caller) -> dict[str, Any]:
+    """What the investment accounts hold and how that changed: a summary, not advice. A change is the difference
+    between two balances, so it includes money paid in or taken out."""
+    return hh.investments_list(c.m)
+
+
+def op_investment_balance(c: Caller, investment_id: str, balance: int, as_of: str | None = None) -> dict[str, Any]:
+    """Note an investment account's balance for a date (today when left out)."""
+    require(c, 'editor')
+    try:
+        body = hh.InvestmentBalance.model_validate({'balance': balance, 'as_of': as_of})
+    except ValueError as e:
+        raise ApiError(400, 'invalid', 'Refused: %s' % e) from None
+    with c.writing():
+        return hh.investment_balance(investment_id, body, c.m)
 
 
 # ---------------------------------------------------------------- recurring amounts
@@ -569,9 +628,11 @@ def _row(r: dict[str, Any]) -> dict[str, Any]:
 def _preview(d: dict[str, Any]) -> dict[str, Any]:
     return {**d, 'basis': _txn(d['basis']),
             'auto': [{**a, 'txn': _txn(a['txn']), 'row': _row(a['row'])} for a in d['auto']],
-            'proposals': [{**p, 'txn': _txn(p['txn']), 'rows': [_row(r) for r in p['rows']]} for p in d['proposals']],
+            'proposals': [{**p, 'txn': _txn(p['txn']), 'rows': [_row(r) for r in p['rows']],
+                           'candidates': [_row(r) for r in p['candidates']]} for p in d['proposals']],
             'tracked': [{**x, 'txn': _txn(x['txn'])} for x in d['tracked']],
-            'unknown': [{**x, 'txn': _txn(x['txn'])} for x in d['unknown']]}
+            'unknown': [{**x, 'txn': _txn(x['txn']), 'candidates': [_row(r) for r in x['candidates']]}
+                        for x in d['unknown']]}
 
 
 def op_upload(c: Caller, filename: str, data: bytes, kind: str = 'bank', profile_id: str = '',
@@ -615,11 +676,12 @@ def op_reconcile_preview(c: Caller, upload_id: str) -> dict[str, Any]:
     return _preview(limited(c, lambda: rc.preview(c.m, upload_id)))
 
 
-def op_reconcile_apply(c: Caller, upload_id: str, fingerprint: str, accept: dict[str, Any]) -> dict[str, Any]:
+def op_reconcile_apply(c: Caller, upload_id: str, fingerprint: str, accept: dict[str, Any],
+                       assign: dict[str, Any] | None = None) -> dict[str, Any]:
     require(c, 'editor')
-    body = rc.ApplyBody(upload_id=upload_id, fingerprint=fingerprint, accept=accept)
+    body = rc.ApplyBody(upload_id=upload_id, fingerprint=fingerprint, accept=accept, assign=assign or {})
     with c.writing():
-        return limited(c, lambda: rc.apply(c.m, body.upload_id, body.fingerprint, body.accept))
+        return limited(c, lambda: rc.apply(c.m, body.upload_id, body.fingerprint, body.accept, body.assign))
 
 
 def op_reconciliations(c: Caller) -> dict[str, Any]:
@@ -653,18 +715,49 @@ def op_series(c: Caller) -> dict[str, Any]:
     b = hh.load(c.m)
     cards = [{'id': a.id, 'name': a.name} for a in b.accounts if a.kind is AccountKind.CREDIT_CARD]
     return {'series': [{'id': s.id, 'name': s.name, 'kind': str(s.kind), 'amount': s.amount,
-                        'cadence': str(s.schedule.cadence), 'status': str(s.status), 'card': s.card,
-                        'group': s.group, 'active': s.active, 'notes': s.notes} for s in b.series],
+                        'cadence': str(s.schedule.cadence), 'interval': s.schedule.interval,
+                        'start': s.schedule.start.isoformat(), 'status': str(s.status), 'card': s.card,
+                        'group': s.group, 'active': s.active, 'notes': s.notes, 'labels': list(s.labels),
+                        'no_schedule': s.no_schedule} for s in b.series],
             'cards': cards}
+
+
+SCHEDULE_FIELDS = ('cadence', 'start', 'end', 'interval', 'day', 'days', 'month', 'weekend')
+
+
+def series_body(fields: dict[str, Any]) -> hh.SeriesBody:
+    """The Bill setup form's body from flat fields (the MCP tool's arguments): the schedule fields are nested."""
+    sched = {k: v for k, v in fields.items() if k in SCHEDULE_FIELDS}
+    return hh.SeriesBody.model_validate({**{k: v for k, v in fields.items() if k not in SCHEDULE_FIELDS},
+                                         'schedule': sched})
+
+
+def op_add_series(c: Caller, body: hh.SeriesBody) -> dict[str, Any]:
+    """Add a recurring item, as the Bill setup form does; its rows are generated to the end of the forecast."""
+    require(c, 'editor')
+    b = hh.load(c.m)
+    if body.card is not None and not any(a.id == body.card and a.kind is AccountKind.CREDIT_CARD for a in b.accounts):
+        raise ApiError(400, 'invalid', 'No credit card account with that id (see list_series).')
+    with c.writing():
+        out = hh.series_add(body, c.m)
+    s = hh.load(c.m).series_by_id()[out['id']]
+    first = occurrences(s.schedule, s.schedule.start, add_months(s.schedule.start, 60))[:4]
+    return {'id': s.id, 'next_dates': [o.actual.isoformat() for o in first]}
 
 
 def op_series_details(c: Caller, series_id: str, fields: dict[str, Any]) -> dict[str, Any]:
     """Change a series' card, debt link, status, group or notes. Its rows keep their amounts; open rows from today
     on take the new card."""
     require(c, 'editor')
-    unknown = set(fields) - {'card', 'debt', 'status', 'group', 'notes'}
+    unknown = set(fields) - {'card', 'debt', 'status', 'group', 'notes', 'labels', 'no_schedule'}
     if unknown or not fields:
-        raise ApiError(400, 'invalid', 'Send one or more of card, debt, status, group, notes.')
+        raise ApiError(400, 'invalid', 'Send one or more of card, debt, status, group, notes, labels, no_schedule.')
+    if 'labels' in fields and not (isinstance(fields['labels'], list)
+                                   and all(isinstance(x, str) for x in fields['labels'])):
+        raise ApiError(400, 'invalid', 'labels is a list of short texts.')
+    if 'no_schedule' in fields and not isinstance(fields['no_schedule'], bool):
+        raise ApiError(400, 'invalid', 'no_schedule is true or false.')
+    labels = hh._labels(fields['labels']) if 'labels' in fields else None
     if 'status' in fields and fields['status'] not in ('autopay', 'manual', 'none'):
         raise ApiError(400, 'invalid', 'status is autopay, manual or none.')
     for k, most in (('card', 40), ('debt', 40), ('group', 40), ('notes', 1000)):
@@ -682,7 +775,9 @@ def op_series_details(c: Caller, series_id: str, fields: dict[str, Any]) -> dict
         debt = fields.get('debt', old.debt) or None
         hh._check_debt(b, debt)
         new = replace(old, card=card, debt=debt, status=Status(fields.get('status', old.status)),
-                      group=fields.get('group', old.group) or None, notes=fields.get('notes', old.notes) or '')
+                      group=fields.get('group', old.group) or None, notes=fields.get('notes', old.notes) or '',
+                      labels=old.labels if labels is None else labels,
+                      no_schedule=fields.get('no_schedule', old.no_schedule))
         b = replace(b, series=tuple(new if s.id == series_id else s for s in b.series))
         return hh.core(lambda: ledger.relabel_series(b, series_id, c.m.today))
     with c.writing():
@@ -777,6 +872,20 @@ def me(c: Reader) -> dict[str, Any]:
     return op_me(c)
 
 
+@router.get('/bank-connection', summary='The optional Plaid connection: last sync and the bank balance gap')
+def bank_connection(c: Reader) -> dict[str, Any]:
+    return op_bank_connection(c)
+
+
+class SyncBank(hh.Body):
+    refresh: bool = False
+
+
+@router.post('/bank-connection/sync', summary='Sync with the linked banks; `refresh` asks the bank first')
+def bank_sync(c: Writer, body: SyncBank | None = None) -> dict[str, Any]:
+    return op_sync_bank(c, bool(body and body.refresh))
+
+
 @router.get('/summary', summary='Checkbook balance, forecast low, year end and alerts')
 def summary(c: Reader) -> dict[str, Any]:
     return op_summary(c)
@@ -795,6 +904,11 @@ def bill_status(bill_id: str, body: hh.StatusBody, c: Marker) -> dict[str, Any]:
 @router.post('/bills/{bill_id}/note', summary='A note on one bill or row; an empty note clears it')
 def bill_note(bill_id: str, body: hh.RowNoteBody, c: Marker) -> dict[str, Any]:
     return op_row_note(c, bill_id, body.note)
+
+
+@router.post('/bills/{bill_id}/labels', summary='The labels of one bill or row; an empty list clears them')
+def bill_labels(bill_id: str, body: hh.RowLabelsBody, c: Marker) -> dict[str, Any]:
+    return op_row_labels(c, bill_id, body.labels)
 
 
 @router.get('/forecast', summary='The running balance through the next N days')
@@ -830,6 +944,16 @@ def expected_status(item_id: str, body: hh.ExpectedStatusBody, c: Marker) -> dic
 @router.get('/debts', summary='Debts and loans')
 def debts(c: Reader) -> dict[str, Any]:
     return op_debts(c)
+
+
+@router.get('/investments', summary='Investment accounts: balances, their change over time and the total by date')
+def investments(c: Reader) -> dict[str, Any]:
+    return op_investments(c)
+
+
+@router.post('/investments/{investment_id}/balance', summary='Note an investment account\'s balance for a date')
+def investment_balance(investment_id: str, body: hh.InvestmentBalance, c: Writer) -> dict[str, Any]:
+    return op_investment_balance(c, investment_id, body.balance, body.as_of.isoformat() if body.as_of else None)
 
 
 @router.post('/debts/payoff', summary='A payoff plan (avalanche or snowball) with an optional extra monthly amount')
@@ -922,6 +1046,7 @@ class ApplyBody(hh.Body):
     fingerprint: str = Field(max_length=64)
     accept: dict[Annotated[str, Field(max_length=20)], Literal['clear', 'reduce']] = Field(default_factory=dict,
                                                                                           max_length=200)
+    assign: rc.AssignMap = Field(default_factory=dict, max_length=200)
 
 
 @router.post('/rows', summary='Add a one-off row (income, bill or spending)')
@@ -1000,7 +1125,9 @@ def reconcile_preview(upload_id: str, c: Writer) -> dict[str, Any]:
 
 @router.post('/uploads/{upload_id}/apply', summary='Apply the dry run with the accepted proposals, all or nothing')
 def reconcile_apply(upload_id: str, body: ApplyBody, c: Writer) -> dict[str, Any]:
-    return op_reconcile_apply(c, upload_id, body.fingerprint, body.accept)
+    return op_reconcile_apply(c, upload_id, body.fingerprint, body.accept,
+                              {k: (v.model_dump() if isinstance(v, rc.AssignBody) else v)
+                               for k, v in body.assign.items()})
 
 
 class SeriesDetails(hh.Body):
@@ -1008,6 +1135,9 @@ class SeriesDetails(hh.Body):
     status: Literal['autopay', 'manual', 'none'] | None = None
     group: Annotated[str, Field(max_length=40)] | None = None
     notes: Annotated[str, Field(max_length=1000)] | None = None
+    debt: Annotated[str, Field(max_length=40)] | None = None
+    labels: list[Annotated[str, Field(max_length=60)]] | None = Field(default=None, max_length=20)
+    no_schedule: bool | None = None
 
 
 class RuleChange(hh.Body):
@@ -1023,7 +1153,13 @@ def series(c: Reader) -> dict[str, Any]:
     return op_series(c)
 
 
-@router.patch('/series/{series_id}', summary='Change a series\' card, status, group or notes (amounts are kept)')
+@router.post('/series', summary='Add a recurring income, bill or spending line (its rows are generated)')
+def series_add(body: hh.SeriesBody, c: Writer) -> dict[str, Any]:
+    return op_add_series(c, body)
+
+
+@router.patch('/series/{series_id}',
+              summary='Change a series\' card, debt link, status, group, notes, labels or no_schedule (amounts kept)')
 def series_details(series_id: str, body: SeriesDetails, c: Writer) -> dict[str, Any]:
     return op_series_details(c, series_id, body.model_dump(exclude_unset=True))
 

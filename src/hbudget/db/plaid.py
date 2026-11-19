@@ -4,11 +4,13 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from typing import Any
 
 from .connection import transaction
 
@@ -61,6 +63,9 @@ class Item:
     linked_by: str | None
     last_sync_at: str | None
     last_error: str
+    last_refresh_at: str | None = None
+    liabilities: bool = False        # the owner turned Plaid Liabilities on for this bank (migration 0021)
+    liabilities_note: str = ''       # why the last try did not work, in plain words
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +78,10 @@ class Account:
     subtype: str
     role: str
     current: int | None
+    tracks: str | None = None        # the investment account whose balance this one keeps (migration 0018)
+    tracking: bool = False
+    debt: str | None = None          # the debt whose balance this one keeps (migration 0020)
+    liability: dict[str, Any] | None = None   # apr_bp, minimum, next_due, statement_balance (migration 0021)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +114,7 @@ def enable(conn: sqlite3.Connection, hid: int, by: str | None) -> None:
 def disable(conn: sqlite3.Connection, hid: int) -> None:
     """Forget everything Plaid-related for the household. The postings already stored in the history stay."""
     with transaction(conn):
-        for table in ('plaid_txns', 'plaid_accounts', 'plaid_items', 'plaid_households'):
+        for table in ('plaid_pending', 'plaid_txns', 'plaid_accounts', 'plaid_items', 'plaid_households'):
             conn.execute('DELETE FROM %s WHERE household_id = ?' % table, (hid,))  # noqa: S608 - constant names
 
 
@@ -139,6 +148,7 @@ def forget_history(conn: sqlite3.Connection, hid: int) -> None:
     """For a wipe: the next sync starts over from the history Plaid keeps; links and roles stay."""
     with transaction(conn):
         conn.execute('DELETE FROM plaid_txns WHERE household_id = ?', (hid,))
+        conn.execute('DELETE FROM plaid_pending WHERE household_id = ?', (hid,))
         conn.execute('UPDATE plaid_items SET cursor = NULL WHERE household_id = ?', (hid,))
 
 
@@ -146,7 +156,8 @@ def forget_history(conn: sqlite3.Connection, hid: int) -> None:
 
 def _item(r: sqlite3.Row) -> Item:
     return Item(r['item_id'], r['institution'], r['token_sealed'], r['cursor'], r['linked_at'], r['linked_by'],
-                r['last_sync_at'], r['last_error'])
+                r['last_sync_at'], r['last_error'], r['last_refresh_at'], bool(r['liabilities']),
+                r['liabilities_note'])
 
 
 def items(conn: sqlite3.Connection, hid: int) -> list[Item]:
@@ -173,6 +184,8 @@ def remove_item(conn: sqlite3.Connection, hid: int, item_id: str) -> None:
         ids = [r[0] for r in conn.execute('SELECT account_id FROM plaid_accounts WHERE household_id = ? AND '
                                           'item_id = ?', (hid, item_id))]
         conn.executemany('DELETE FROM plaid_txns WHERE household_id = ? AND account_id = ?', [(hid, a) for a in ids])
+        conn.executemany('DELETE FROM plaid_pending WHERE household_id = ? AND account_id = ?',
+                         [(hid, a) for a in ids])
         conn.execute('DELETE FROM plaid_items WHERE household_id = ? AND item_id = ?', (hid, item_id))
 
 
@@ -183,11 +196,30 @@ def save_sync(conn: sqlite3.Connection, hid: int, item_id: str, cursor: str | No
                      'WHERE household_id = ? AND item_id = ?', (cursor, _now(now), error[:300], hid, item_id))
 
 
+def claim_refresh(conn: sqlite3.Connection, hid: int, item_id: str, older_than: datetime,
+                  now: datetime | None = None) -> bool:
+    """Take the bank's turn for an on-demand refresh: true, and the time is noted, when the last one was before
+    `older_than` (or never). One statement, so two requests at once cannot both pay for one."""
+    with transaction(conn):
+        cur = conn.execute('UPDATE plaid_items SET last_refresh_at = ? WHERE household_id = ? AND item_id = ? AND '
+                           '(last_refresh_at IS NULL OR last_refresh_at < ?)',
+                           (_now(now), hid, item_id, _now(older_than)))
+    return cur.rowcount == 1
+
+
+def release_refresh(conn: sqlite3.Connection, hid: int, item_id: str, was: str | None) -> None:
+    """The refresh did not happen (Plaid refused it): give the turn back, so the next try is not made to wait."""
+    with transaction(conn):
+        conn.execute('UPDATE plaid_items SET last_refresh_at = ? WHERE household_id = ? AND item_id = ?',
+                     (was, hid, item_id))
+
+
 def accounts(conn: sqlite3.Connection, hid: int) -> list[Account]:
     rows = conn.execute('SELECT * FROM plaid_accounts WHERE household_id = ? ORDER BY item_id, name, account_id',
                         (hid,))
     return [Account(r['account_id'], r['item_id'], r['name'], r['mask'], r['type'], r['subtype'], r['role'],
-                    r['current']) for r in rows]
+                    r['current'], r['tracks'], bool(r['tracking']), r['debt'],
+                    json.loads(r['liability_json']) if r['liability_json'] else None) for r in rows]
 
 
 def upsert_accounts(conn: sqlite3.Connection, hid: int, item_id: str,
@@ -218,6 +250,44 @@ def set_role(conn: sqlite3.Connection, hid: int, account_id: str, role: str) -> 
     return True
 
 
+def set_liabilities(conn: sqlite3.Connection, hid: int, item_id: str, on: bool) -> None:
+    """Whether syncs ask this bank for rates, minimums and due dates. Off forgets what was read."""
+    with transaction(conn):
+        conn.execute("UPDATE plaid_items SET liabilities = ?, liabilities_note = '' WHERE household_id = ? AND "
+                     'item_id = ?', (int(on), hid, item_id))
+        if not on:
+            conn.execute('UPDATE plaid_accounts SET liability_json = NULL WHERE household_id = ? AND item_id = ?',
+                         (hid, item_id))
+
+
+def save_liabilities(conn: sqlite3.Connection, hid: int, item_id: str, note: str,
+                     by_account: dict[str, dict[str, Any]] | None = None) -> None:
+    """What the bank sent per account (None: nothing came, keep what is there) and the note for the page."""
+    with transaction(conn):
+        conn.execute('UPDATE plaid_items SET liabilities_note = ? WHERE household_id = ? AND item_id = ?',
+                     (note[:300], hid, item_id))
+        for account_id, data in (by_account or {}).items():
+            conn.execute('UPDATE plaid_accounts SET liability_json = ? WHERE household_id = ? AND item_id = ? AND '
+                         'account_id = ?', (json.dumps(data, separators=(',', ':')), hid, item_id, account_id))
+
+
+def set_debt(conn: sqlite3.Connection, hid: int, account_id: str, debt: str | None) -> None:
+    """The debt whose balance each sync takes from this account (None: none). A debt has one keeper at most."""
+    with transaction(conn):
+        if debt is not None:
+            conn.execute('UPDATE plaid_accounts SET debt = NULL WHERE household_id = ? AND debt = ?', (hid, debt))
+        conn.execute('UPDATE plaid_accounts SET debt = ? WHERE household_id = ? AND account_id = ?',
+                     (debt, hid, account_id))
+
+
+def set_tracking(conn: sqlite3.Connection, hid: int, account_id: str, on: bool, tracks: str | None = None) -> None:
+    """Whether each sync notes this account's balance for an investment account. `tracks` names that account; left
+    out, the one remembered from before stays."""
+    with transaction(conn):
+        conn.execute('UPDATE plaid_accounts SET tracking = ?, tracks = COALESCE(?, tracks) WHERE household_id = ? '
+                     'AND account_id = ?', (int(on), tracks, hid, account_id))
+
+
 # ---------------------------------------------------------------- transactions
 
 def store_txns(conn: sqlite3.Connection, hid: int,
@@ -245,6 +315,31 @@ def mark_removed(conn: sqlite3.Connection, hid: int, plaid_ids: Sequence[str]) -
             conn.execute('UPDATE plaid_txns SET removed = 1 WHERE household_id = ? AND plaid_id = ?', (hid, pid))
             out.append(r[0] or '')
     return out
+
+
+def set_pending(conn: sqlite3.Connection, hid: int, pending: Iterable[tuple[str, str, date, int]],
+                gone: Iterable[str], older_than: date | None = None) -> None:
+    """Keep the pending transactions Plaid reported, (plaid_id, account_id, date, amount), and drop the ids that
+    are no longer pending: withdrawn (Plaid does that when one posts) or reported as posted. Those dated before
+    `older_than` go too, so one Plaid never withdrew does not stay for ever."""
+    with transaction(conn):
+        if older_than is not None:
+            conn.execute('DELETE FROM plaid_pending WHERE household_id = ? AND posted < ?',
+                         (hid, older_than.isoformat()))
+        conn.executemany('DELETE FROM plaid_pending WHERE household_id = ? AND plaid_id = ?',
+                         [(hid, pid) for pid in gone])
+        conn.executemany('INSERT INTO plaid_pending (household_id, plaid_id, account_id, posted, amount) '
+                         'VALUES (?, ?, ?, ?, ?) ON CONFLICT (household_id, plaid_id) DO UPDATE SET '
+                         'account_id = excluded.account_id, posted = excluded.posted, amount = excluded.amount',
+                         [(hid, pid, account_id, posted.isoformat(), amount)
+                          for pid, account_id, posted, amount in pending])
+
+
+def pending_amounts(conn: sqlite3.Connection, hid: int, account_id: str, since: date) -> list[int]:
+    """Amounts (bank sign) of the account's pending transactions dated `since` or later; older ones are stale."""
+    return [r[0] for r in conn.execute('SELECT amount FROM plaid_pending WHERE household_id = ? AND account_id = ? '
+                                       'AND posted >= ? ORDER BY posted, plaid_id',
+                                       (hid, account_id, since.isoformat()))]
 
 
 def known(conn: sqlite3.Connection, hid: int, plaid_ids: Sequence[str]) -> int:

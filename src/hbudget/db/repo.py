@@ -68,6 +68,7 @@ __all__ = [
     'budget_version',
     'create_household',
     'create_upload',
+    'debt_sources',
     'delete_household',
     'delete_profile',
     'delete_setting',
@@ -84,6 +85,7 @@ __all__ = [
     'import_bill_system',
     'insert_card_txns',
     'insert_txns',
+    'investment_sources',
     'list_audit',
     'list_card_txns',
     'list_history',
@@ -96,6 +98,9 @@ __all__ = [
     'load_extras',
     'load_notes',
     'merge_duplicate_txns',
+    'note_debt_balance',
+    'note_debt_terms',
+    'note_investment_balance',
     'purge_audit',
     'redate_card_txns',
     'remove_member',
@@ -308,10 +313,11 @@ def _schedule(raw: str) -> Schedule:
 _TABLES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     'series': (('id',), ('id', 'name', 'kind', 'amount', 'schedule_json', 'funded_by', 'status', 'card', 'debt', 'grp',
                          'month_amounts_json', 'cycle_amounts_json', 'active', 'notes', 'position',
-                         'generated_through')),
+                         'generated_through', 'labels_json', 'no_schedule')),
     'ledger_rows': (('id',), ('id', 'series_id', 'name', 'kind', 'amount', 'due_date', 'nominal_date', 'order_date',
                               'seq', 'state', 'status_override', 'amount_was', 'overridden', 'card', 'paid',
-                              'paid_txn_ids_json', 'paid_at_change', 'cleared_txn_id', 'cleared_on', 'note')),
+                              'paid_txn_ids_json', 'paid_at_change', 'cleared_txn_id', 'cleared_on', 'note',
+                              'labels_json')),
     'payee_rules': (('id',), ('id', 'position', 'name', 'kind', 'contains_json', 'regex', 'direction', 'min_amount',
                               'max_amount', 'targets_json', 'card', 'note')),
     'accounts': (('id',), ('id', 'position', 'name', 'kind', 'balance', 'apr_bp', 'payment', 'minimum', 'credit_limit',
@@ -330,7 +336,8 @@ def _series_rec(s: Series, pos: int) -> dict[str, Any]:
             'card': s.card, 'debt': s.debt, 'grp': s.group,
             'month_amounts_json': _j([list(x) for x in s.month_amounts]),
             'cycle_amounts_json': _j(list(s.cycle_amounts)), 'active': int(s.active), 'notes': s.notes,
-            'position': pos, 'generated_through': _iso(s.generated_through)}
+            'position': pos, 'generated_through': _iso(s.generated_through), 'labels_json': _j(list(s.labels)),
+            'no_schedule': int(s.no_schedule)}
 
 
 def _row_rec(r: LedgerRow) -> dict[str, Any]:
@@ -340,7 +347,8 @@ def _row_rec(r: LedgerRow) -> dict[str, Any]:
             'status_override': r.status_override.value if r.status_override else None,
             'amount_was': r.amount_was, 'overridden': int(r.overridden), 'card': r.card, 'paid': r.paid,
             'paid_txn_ids_json': _j(list(r.paid_txn_ids)), 'paid_at_change': r.paid_at_change,
-            'cleared_txn_id': r.cleared_txn_id, 'cleared_on': _iso(r.cleared_on), 'note': r.note}
+            'cleared_txn_id': r.cleared_txn_id, 'cleared_on': _iso(r.cleared_on), 'note': r.note,
+            'labels_json': _j(list(r.labels))}
 
 
 row_rec = _row_rec      # a row as plain values (the reconciliation keeps them to undo it)
@@ -354,7 +362,8 @@ def row_from(r: Any) -> LedgerRow:     # a sqlite3.Row or a row_rec dict
         status_override=Status(r['status_override']) if r['status_override'] else None, amount_was=r['amount_was'],
         overridden=bool(r['overridden']), card=r['card'], paid=r['paid'],
         paid_txn_ids=tuple(str(x) for x in _loads(r['paid_txn_ids_json'])), paid_at_change=r['paid_at_change'],
-        cleared_txn_id=r['cleared_txn_id'], cleared_on=_d(r['cleared_on']), note=r['note'])
+        cleared_txn_id=r['cleared_txn_id'], cleared_on=_d(r['cleared_on']), note=r['note'],
+        labels=tuple(str(x) for x in _loads(r['labels_json'])))
 
 
 def _rule_rec(r: PayeeRule, pos: int) -> dict[str, Any]:
@@ -496,7 +505,9 @@ def load_budget(conn: sqlite3.Connection, hid: int) -> Budget:
         funded_by=r['funded_by'], status=Status(r['status']), card=r['card'], debt=r['debt'], group=r['grp'],
         month_amounts=tuple((int(m), int(a)) for m, a in _loads(r['month_amounts_json'])),
         cycle_amounts=tuple(int(x) for x in _loads(r['cycle_amounts_json'])), active=bool(r['active']),
-        notes=r['notes'], generated_through=_d(r['generated_through'])) for r in rows('series', 'position, id'))
+        notes=r['notes'], generated_through=_d(r['generated_through']),
+        labels=tuple(str(x) for x in _loads(r['labels_json'])), no_schedule=bool(r['no_schedule']))
+        for r in rows('series', 'position, id'))
     ledger = tuple(row_from(r) for r in rows('ledger_rows', 'order_date, seq, id'))
     rules = tuple(PayeeRule(
         id=r['id'], name=r['name'], kind=RuleKind(r['kind']), contains=tuple(_loads(r['contains_json'])),
@@ -880,6 +891,85 @@ _IN_HISTORY = ("(NOT EXISTS (SELECT 1 FROM upload_txns l WHERE l.household_id = 
                "AND u.status != 'rejected')))")
 
 
+def note_investment_balance(conn: sqlite3.Connection, hid: int, account_id: str, on: date, balance: int,
+                            today: date) -> bool:
+    """A linked account's balance for an investment account, noted for `on` (core.investments.record). One row is
+    updated: no audit entry and no new budget version, or a daily sync would fill the log and make every open page
+    look out of date. False when the household has no such investment account (it was deleted)."""
+    from hbudget.core import investments
+
+    with transaction(conn, immediate=True):
+        r = conn.execute("SELECT name, balance, as_of, history_json FROM accounts WHERE household_id = ? AND id = ? "
+                         "AND kind = 'investment'", (hid, account_id)).fetchone()
+        if r is None:
+            return False
+        old = Account(id=account_id, name=r['name'], kind=AccountKind.INVESTMENT, balance=r['balance'],
+                      as_of=_d(r['as_of']),
+                      history=tuple((date.fromisoformat(d), int(v)) for d, v in _loads(r['history_json'])))
+        new = investments.record(old, on, balance, today)
+        conn.execute('UPDATE accounts SET balance = ?, as_of = ?, history_json = ? WHERE household_id = ? AND id = ?',
+                     (new.balance, _iso(new.as_of), _j([[d.isoformat(), v] for d, v in new.history]), hid,
+                      account_id))
+    return True
+
+
+def note_debt_balance(conn: sqlite3.Connection, hid: int, account_id: str, on: date, balance: int) -> bool:
+    """A linked account's balance for a debt (D-105), with `on` as its date and the earlier balance kept in the
+    history (core.payoff.record). One row is updated, as in note_investment_balance: no audit entry and no new
+    budget version. False when the household has no such debt (it was deleted, or is not a debt)."""
+    from hbudget.core import payoff
+
+    with transaction(conn, immediate=True):
+        r = conn.execute("SELECT name, kind, balance, as_of, history_json FROM accounts WHERE household_id = ? AND "
+                         "id = ? AND kind NOT IN ('checking', 'savings', 'investment')", (hid, account_id)).fetchone()
+        if r is None:
+            return False
+        old = Account(id=account_id, name=r['name'], kind=AccountKind(r['kind']), balance=r['balance'],
+                      as_of=_d(r['as_of']),
+                      history=tuple((date.fromisoformat(d), int(v)) for d, v in _loads(r['history_json'])))
+        new = payoff.record(old, replace(old, balance=max(balance, 0), as_of=on))
+        conn.execute('UPDATE accounts SET balance = ?, as_of = ?, history_json = ? WHERE household_id = ? AND id = ?',
+                     (new.balance, _iso(new.as_of), _j([[d.isoformat(), v] for d, v in new.history]), hid,
+                      account_id))
+    return True
+
+
+def note_debt_terms(conn: sqlite3.Connection, hid: int, account_id: str, on: date, apr_bp: int | None,
+                    minimum: int | None) -> None:
+    """The rate and the minimum payment the bank reports for a debt (Plaid Liabilities, D-106); None leaves a
+    figure as it is. The rate is left alone while a promo rate runs: the bank reports the card's standard rate,
+    and the debt's own figures say what the promo is and what comes after. One row, no audit entry."""
+    with transaction(conn, immediate=True):
+        if apr_bp is not None:
+            conn.execute("UPDATE accounts SET apr_bp = ? WHERE household_id = ? AND id = ? AND kind NOT IN "
+                         "('checking', 'savings', 'investment') AND (promo_ends IS NULL OR promo_ends < ?)",
+                         (apr_bp, hid, account_id, on.isoformat()))
+        if minimum is not None:
+            conn.execute("UPDATE accounts SET minimum = ? WHERE household_id = ? AND id = ? AND kind NOT IN "
+                         "('checking', 'savings', 'investment')", (minimum, hid, account_id))
+
+
+def debt_sources(conn: sqlite3.Connection, hid: int) -> dict[str, dict[str, Any]]:
+    """Debt account id -> the linked bank that keeps its balance (institution, last sync, any problem), and what
+    Plaid Liabilities last said about it when the owner turned that on (rate, minimum, next due date)."""
+    rows = conn.execute(
+        'SELECT a.debt, i.institution, i.last_sync_at, i.last_error, a.liability_json FROM plaid_accounts a JOIN '
+        'plaid_items i ON i.household_id = a.household_id AND i.item_id = a.item_id WHERE a.household_id = ? AND '
+        'a.debt IS NOT NULL', (hid,))
+    return {r[0]: {'institution': r[1], 'last_sync_at': r[2], 'problem': r[3] or None,
+                   'terms': json.loads(r[4]) if r[4] else None} for r in rows}
+
+
+def investment_sources(conn: sqlite3.Connection, hid: int) -> dict[str, dict[str, Any]]:
+    """Investment account id -> the linked bank that keeps its balance (institution, last sync, any problem). Plain
+    SQL on the Plaid tables, which are empty unless the household turned the bank connection on."""
+    rows = conn.execute(
+        'SELECT a.tracks, i.institution, i.last_sync_at, i.last_error FROM plaid_accounts a JOIN plaid_items i ON '
+        'i.household_id = a.household_id AND i.item_id = a.item_id WHERE a.household_id = ? AND a.tracking = 1 '
+        'AND a.tracks IS NOT NULL', (hid,))
+    return {r[0]: {'institution': r[1], 'last_sync_at': r[2], 'problem': r[3] or None} for r in rows}
+
+
 def list_history(conn: sqlite3.Connection, hid: int) -> list[BankTxn]:
     """Every bank transaction of the household once (deduplicated), oldest first: the history behind Check-up,
     Flow and caps. A transaction that only rejected uploads contain is left out."""
@@ -1207,6 +1297,7 @@ def wipe_household(conn: sqlite3.Connection, hid: int, *, user_id: int | None = 
             conn.execute('DELETE FROM %s WHERE household_id = ?' % table, (hid,))  # noqa: S608 - constant names
         # a Plaid link stays (it is a setting, not budget data); the next sync starts over from Plaid's history
         conn.execute('DELETE FROM plaid_txns WHERE household_id = ?', (hid,))
+        conn.execute('DELETE FROM plaid_pending WHERE household_id = ?', (hid,))
         conn.execute('UPDATE plaid_items SET cursor = NULL WHERE household_id = ?', (hid,))
         conn.execute("UPDATE households SET start_balance = 0, as_of = ?, last_reconciled_through = NULL, "
                      "horizon_mode = 'rolling', horizon_months = 15, horizon_end = NULL, settings_json = '{}', "

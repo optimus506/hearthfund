@@ -160,7 +160,7 @@ class Schedule:
     start: date                      # anchor: the first occurrence (weekly/biweekly/once; any weekday), or the
                                      # first possible date (monthly/semimonthly/yearly: earlier dates are dropped)
     end: date | None = None          # last possible occurrence (inclusive)
-    interval: int = 1                # weekly only: every N weeks (biweekly == weekly with interval 2)
+    interval: int = 1                # weekly: every N weeks (biweekly == weekly with interval 2); monthly: every N months
     day: int | None = None           # monthly: day of month 1..31 (clamped to month end)
     days: tuple[int, int] | None = None   # semimonthly: two days, e.g. (1, 15) or (15, 31)
     month: int | None = None         # yearly: month 1..12 (day comes from `day`)
@@ -372,7 +372,7 @@ shift, `actual` after it, `index` the occurrence number counted from `schedule.s
 | weekly | `schedule.start + 7*interval*k`, k >= 0 |
 | biweekly | `schedule.start + 14*k` |
 | semimonthly | each month from `schedule.start`'s month: `clamp_day(y, m, days[0])`, `clamp_day(y, m, days[1])` (two distinct days, sorted); nominal dates before `schedule.start` dropped |
-| monthly | `clamp_day(y, m, day)` each month from `schedule.start`'s month (`day` defaults to `start.day`); nominal dates before `schedule.start` dropped |
+| monthly | `clamp_day(y, m, day)` every `interval` months (`day` defaults to `start.day`), counted from the first occurrence: `schedule.start`'s month, or the month after when that month's day is before `schedule.start` (`recurrence.first_month`). Interval 3 is quarterly (D-099) |
 | yearly | `clamp_day(y, month, day)` each year from `schedule.start`'s year (Feb 29 -> Feb 28 in non-leap years); nominal dates before `schedule.start` dropped |
 
 Weekend shifting is applied after clamping. The **nominal** (unshifted) date decides membership in the range and in
@@ -636,10 +636,18 @@ Pass 2, deferred txns in order (rows are reserved as proposals are made, so prop
 - `card`: `rule.card` is required for this kind (the schema and `billsystem.check` enforce it; a card rule without a
   card matches no rows rather than every row without a card). Candidates are open rows with `row.card == rule.card`
   (and `rule.card is not None`), positive,
-  with `due_date <= t.posted`, sorted oldest first. Greedy: keep adding while the total is below the payment, and
+  with `due_date <= t.posted`, sorted oldest first; when there is none, the card's rows dated up to
+  `CARD_AHEAD_DAYS` (7) after the payment instead, and the note ends "; dated after the payment" (D-107). Greedy: keep adding while the total is below the payment, and
   stop before a row that would take the total further from the payment than it already is (always take at least
   one). Proposal kind `card_bundle`, note "card payment covers these card-funded rows ($total of $payment)".
-  None -> `Unknown("card payment, but no open card-funded rows dated on or before it")`.
+  None -> `Unknown("card payment, but no open card-funded rows dated up to 7 days after it")`.
+- The person's own choice (D-107): `assignable()` lists, for each money-out line that is unknown or has a proposal,
+  the open bill and spending rows to offer (the proposal's own rows, then the card's rows, then the nearest dates;
+  62 days back, 31 ahead, 40 at most). `apply(..., assign={txn_id: Assign(clear, reduce)})` clears the `clear` rows
+  with that line and takes the rest of the payment off the `reduce` row, which stays open. Refused: a line whose
+  proposal is also accepted, a row used twice or already matched, rows totalling more than the payment without a
+  `reduce` row. `Applied.assigned` keeps what each line covered, so the report and the unmatched alert count only
+  the rest.
 - `bill` out of tolerance / `ask`: one proposal per target name that has a candidate (for `ask` the candidate with
   the closest amount, ties oldest; for `bill` the oldest), each with note "bank amount differs from budget by $d"
   (prefixed by the rule note for `ask`). All proposals of one txn share `group = txn_id`. No candidates: the
@@ -976,7 +984,8 @@ last entry of `Forecast.year_ends` with it (they are the same cell when the shee
   `schedule.end` = that last row's nominal date, so the series stays ended after the horizon is extended.
 - `io.infer.infer_series(rows) -> tuple[list[Series], list[LedgerRow]]` groups rows by exact name and detects the
   cadence from the due dates: all gaps 7 -> weekly; 14 -> biweekly; same day of month (allowing clamping) ->
-  monthly; two stable days a month -> semimonthly; one per year -> yearly; one row -> once; anything else ->
+  monthly; the same day every 2, 3, 4 or 6 months, three rows or more -> monthly with that interval; two stable days
+  a month -> semimonthly; one per year -> yearly; one row -> once; anything else ->
   rows stay standalone (series_id None) with a warning-free note. Weekend shifts are detected for income (dates that
   only miss the pattern on Fridays before a weekend). The series amount is the most common amount; rows with another
   amount get `overridden=True` and keep their exact amount. Inference never changes a row's amount, date or order.
@@ -1154,7 +1163,9 @@ needs no real dates at all. The core `Schedule.start` is always a concrete date.
 `monday`/`sunday` in the file and 0/6 in the core. A `biweekly` schedule given only by `weekday` has an arbitrary
 phase (which of the two weeks); `to_budget` resolves it to the first such weekday on or after `as_of` and adds the
 warning "set a start date for <name> so the paydays fall in the right weeks" (D-034). If `start` and `weekday` are
-both given, the first occurrence is the first such weekday on or after `start`.
+both given, the first occurrence is the first such weekday on or after `start`. A `monthly` schedule with an
+`interval` above 1 and no `start` likewise has arbitrary months: the warning is "set a start date for <name> so it
+falls in the right months" (D-099).
 
 ### 13.3 Backup extension (`backup`)
 
@@ -1496,6 +1507,8 @@ The CLI uses the same `db` and `core` code as the web app and the same data dir.
 | `HBUDGET_ADMIN_USERNAME` / `HBUDGET_ADMIN_PASSWORD` | unset | optional non-interactive first-run admin; read only while there are no users (remove them after the first start) |
 | `HBUDGET_PLAID` | `off` | `off`, `sandbox` or `production`: the optional Plaid connection (D-091) |
 | `HBUDGET_PLAID_CLIENT_ID` | unset | required when Plaid is on |
+| `HBUDGET_PLAID_REFRESH` | `false` | offer "Refresh from the bank now": Plaid's on-demand refresh, a paid add-on (D-101) |
+| `HBUDGET_PLAID_LIABILITIES` | `false` | let an owner turn on Plaid Liabilities per linked bank: rate, minimum payment, due date; a paid product (D-106) |
 | `HBUDGET_PLAID_SECRET` / `HBUDGET_PLAID_SECRET_FILE` | unset | the secret for that environment, directly or in a file (one of them, required when on) |
 
 ## 19. Packaging

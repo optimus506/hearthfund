@@ -121,14 +121,51 @@ def test_browser_smoke(server: tuple[str, Path]) -> None:
         page.set_input_files('#upFile', str(FIX / 'bank.csv'))
         page.click('#upForm button[type=submit]')
         page.wait_for_selector('#preview h2:has-text("Dry run")')
+        # the dry run is brought into view with focus on its heading
+        page.wait_for_function("document.activeElement === document.querySelector('#preview h2')")
+        # ?upload=<id> (the link after a bank sync) opens that upload's dry run; an id that is gone says so
+        page.goto(h + '/reconcile?upload=nope')
+        page.wait_for_selector('#msg >> text=not on this list any more')
+        assert page.is_hidden('#preview')
+        up_id = page.evaluate("fetch('/api' + location.pathname.replace('/reconcile', '/uploads'))"
+                              ".then((r) => r.json()).then((d) => d.uploads.find((u) => u.status === 'waiting').id)")
+        page.goto(h + '/reconcile?upload=' + up_id)
+        page.wait_for_selector('#preview h2:has-text("Dry run")')
+        page.wait_for_function("document.activeElement === document.querySelector('#preview h2')")
+        assert 'upload=' not in page.url
+        assert page.evaluate("document.querySelector('#preview').getBoundingClientRect().top < innerHeight")
         text = page.inner_text('#preview')
         assert 'null' not in text and 'P1' in text and 'P2' in text
         page.select_option('#acc-P1', 'clear')
+        # "Choose the rows it paid…": the proposal's own rows start ticked, with the total against the payment;
+        # more than the payment holds Apply until a row comes off or a larger row keeps the rest
+        page.select_option('#acc-P2', 'pick')
+        page.wait_for_selector('.picker >> text=Chosen')
+        assert page.locator('.picker input:checked').count() == 2 and page.is_enabled('#recApply')
+        page.locator('.picker input:not(:checked)').first.check()     # 40.00 more than the 320.00 payment
+        page.wait_for_selector('.picker >> text=more than the')
+        assert page.is_disabled('#recApply') and 'total more than the payment' in page.inner_text('#recApplyNote')
+        if os.environ.get('HBUDGET_E2E_SHOTS'):
+            page.screenshot(path=os.environ['HBUDGET_E2E_SHOTS'] + '/picker.png', full_page=True)
+        page.select_option('.item:has(#acc-P2) .picker select', index=1)     # that row keeps the rest
+        page.wait_for_selector('.picker >> text=stays open with $40.00 left')
+        assert page.is_enabled('#recApply')
         page.select_option('#acc-P2', 'clear')
+        assert page.locator('.item:has(#acc-P2) .picker').count() == 0 and page.is_enabled('#recApply')
+        # an unmatched line: "This paid…" a 40.00 row, which keeps the 15.00 the 25.00 payment did not cover
+        shop = page.locator('#preview .item:has-text("MYSTERY SHOP")')
+        shop.locator('summary').click()
+        shop.locator('label:has-text("Lawn care") input').check()
+        shop.locator('select').select_option(index=1)
+        shop.locator('text=Lawn care stays open with $15.00 left').wait_for()
+        assert page.locator('.item:has(#acc-P2) select').first.is_enabled()
         page.click('#preview button:has-text("Apply")')
         page.wait_for_selector('#preview h2:has-text("Applied")')
+        page.wait_for_function("document.activeElement === document.querySelector('#preview h2')")
         report = page.inner_text('#preview')
-        assert '$595.00 on 03/14/2029' in report
+        # 620.00, not 595.00: the 25.00 the shop line paid is no longer counted a second time on Lawn care
+        assert '$620.00 on 03/14/2029' in report
+        assert 'chosen, part paid' in report and 'MYSTERY SHOP | unmatched' not in report
 
         # a card export, then the Card tab: move a store to another category (D-083)
         card_csv = data / 'card.csv'
@@ -167,7 +204,7 @@ def test_browser_smoke(server: tuple[str, Path]) -> None:
         page.goto(h + '/bills')
         page.wait_for_selector('#strip a b')
         strip = page.inner_text('#strip')
-        assert '$635.00' in strip and '$595.00' in strip
+        assert '$635.00' in strip and '$620.00' in strip
 
         # Bills: mark autopay, Change + Undo, Remove + Undo; the summary strip follows every edit. Rows are compact
         # (#100): a status pill opens the status choice and Change under the row.
@@ -247,6 +284,26 @@ def test_browser_smoke(server: tuple[str, Path]) -> None:
         page.select_option('#exDir', 'in')
         page.click('#exForm button[type=submit]')
         page.wait_for_selector('#exList >> text=Refund')
+
+        # Bill setup: "Every 3 months" is Monthly with every N filled in (D-099); the saved item says so and edits back
+        page.goto(h + '/series')
+        page.wait_for_selector('#seriesList table')
+        page.fill('#sName', 'Trash pickup')
+        page.fill('#sAmount', '75.00')
+        page.select_option('#sCadence', 'monthly:3')
+        assert page.input_value('#sInterval') == '3' and page.is_visible('#sCadenceHint')
+        page.fill('#sStart', '2031-12-01')
+        page.click('#sSave')
+        page.wait_for_selector('#seriesList tr:has-text("Trash pickup") >> text=Every 3 months')
+        page.click('#seriesList tr:has-text("Trash pickup") >> text=Edit')
+        assert page.input_value('#sCadence') == 'monthly:3'
+        page.fill('#sInterval', '4')                         # no choice of its own: plain Monthly, every 4
+        assert page.input_value('#sCadence') == 'monthly' and page.is_visible('#sCadenceHint')
+        page.click('#sSave')
+        page.wait_for_selector('#seriesList tr:has-text("Trash pickup") >> text=Every 4 months')
+        page.click('#seriesList tr:has-text("Trash pickup") >> text=Delete')
+        page.click('#seriesList tr:has-text("Trash pickup") >> text=Delete future rows too?')
+        page.wait_for_selector('#seriesList tr:has-text("Trash pickup")', state='detached')
 
         # Goals: the list loads and a first goal is saved and shown
         page.goto(h + '/goals')

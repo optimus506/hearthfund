@@ -131,3 +131,22 @@ def test_amount_for_base_month_and_cycle():
     assert amount_for(seasonal, feb) == 10000
     cycle = series(cycle_amounts=(5000, 3500), month_amounts=((3, 1),))
     assert [amount_for(cycle, o) for o in occ[:4]] == [5000, 3500, 5000, 3500]
+
+
+def test_every_n_months_counts_from_the_first_occurrence():
+    q = sched(Cadence.MONTHLY, D(2028, 12, 1), interval=3)              # quarterly (D-099)
+    assert dates(q, D(2028, 11, 1), D(2029, 12, 31)) == [D(2028, 12, 1), D(2029, 3, 1), D(2029, 6, 1), D(2029, 9, 1),
+                                                         D(2029, 12, 1)]
+    assert dates(q, D(2029, 4, 1), D(2029, 9, 30)) == [D(2029, 6, 1), D(2029, 9, 1)]   # a later window, same months
+    assert [o.index for o in occurrences(q, D(2029, 4, 1), D(2029, 9, 30))] == [2, 3]
+    # the day has passed in the start's month: the first occurrence, and the count, begin the month after
+    late = sched(Cadence.MONTHLY, D(2029, 1, 20), day=5, interval=2)
+    assert dates(late, D(2029, 1, 1), D(2029, 7, 31)) == [D(2029, 2, 5), D(2029, 4, 5), D(2029, 6, 5)]
+    # the 31st clamps in short months, across a year end, and stops at the end date
+    clamp = sched(Cadence.MONTHLY, D(2028, 8, 31), interval=3, end=D(2029, 5, 31))
+    assert dates(clamp, D(2028, 1, 1), D(2030, 1, 1)) == [D(2028, 8, 31), D(2028, 11, 30), D(2029, 2, 28),
+                                                          D(2029, 5, 31)]
+    half = sched(Cadence.MONTHLY, D(2029, 6, 15), interval=6, weekend=Weekend.BEFORE)
+    assert dates(half, D(2029, 6, 1), D(2030, 6, 30)) == [D(2029, 6, 15), D(2029, 12, 14), D(2030, 6, 14)]
+    one = sched(Cadence.MONTHLY, D(2029, 1, 10), interval=1)            # every 1 month is plain monthly
+    assert dates(one, D(2029, 1, 1), D(2029, 3, 31)) == [D(2029, 1, 10), D(2029, 2, 10), D(2029, 3, 10)]

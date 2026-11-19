@@ -264,6 +264,21 @@ def test_bills_csv() -> None:
     assert yearly.schedule.cadence is Cadence.YEARLY and yearly.schedule.start == date(2029, 6, 1)
 
 
+def test_bills_csv_every_n_months() -> None:
+    head = b'name,kind,amount,cadence,start,day,interval\n'
+    trash, hoa, pool = bs.bills_csv(head + b'Trash,bill,75,quarterly,2028-12-01,,\n'
+                                           b'HOA,bill,300,monthly,2029-01-15,,6\n'
+                                           b'Pool,spending,40,weekly,2029-01-06,,2\n', today=TODAY)
+    assert (trash.schedule.cadence, trash.schedule.interval, trash.schedule.start) == (Cadence.MONTHLY, 3,
+                                                                                    date(2028, 12, 1))
+    assert (hoa.schedule.cadence, hoa.schedule.interval) == (Cadence.MONTHLY, 6)
+    assert (pool.schedule.cadence, pool.schedule.interval) == (Cadence.WEEKLY, 2)
+    for row in (b'Trash,bill,75,quarterly,,1,', b'Trash,bill,75,monthly,,1,3', b'Trash,bill,75,monthly,2029-01-01,,0',
+                b'Trash,bill,75,monthly,2029-01-01,,x'):
+        with pytest.raises(ImportProblem):
+            bs.bills_csv(head + row + b'\n', today=TODAY)
+
+
 def test_bills_csv_errors() -> None:
     head = b'name,kind,amount,cadence,start,days\n'
     with pytest.raises(ImportProblem, match='missing column'):
@@ -289,6 +304,12 @@ def test_to_budget_directly_collects_warnings() -> None:
     assert b.start_balance == 100050 and b.as_of == date(2029, 1, 5)       # as_of from the file wins over today
     assert b.series[0].schedule.start == date(2029, 1, 8)
     assert warnings == ['Set a start date for Pay so the paydays fall in the right weeks.']
+    # every 3 months without a start: the months are a guess, so the household is told; with one it round-trips
+    q = bs.parse(_yaml('bills:\n  - {id: trash, name: Trash, amount: 75, schedule: {cadence: monthly, day: 1, '
+                       'interval: 3}}\n'))
+    said: list[str] = []
+    assert bs.to_budget(q, today=date(2031, 1, 5), warnings=said).series[-1].schedule.interval == 3
+    assert said == ['Set a start date for Trash so it falls in the right months.']
     assert b.rows and b.rows[0].due_date == date(2029, 1, 8)
     # another currency is kept (backups round-trip) but the household is told it changes nothing
     eur = {**doc, 'household': {**doc['household'], 'currency': 'EUR'}}  # type: ignore[dict-item]

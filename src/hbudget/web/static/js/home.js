@@ -1,6 +1,6 @@
 // Home: the summary, money left until the next payday and what is due before it, the next 60 days of the
 // balance, the paydays after that, and the alerts (the only page that lists them).
-import { api, $, el, money, fmtD, page, can, say, busy } from './api.js';
+import { api, $, el, money, fmtD, page, can, say, busy, labelChips } from './api.js';
 import { renderSummary } from './summary.js';
 import { lineChart } from './chart.js';
 import { goalBar, goalLine } from './goalbits.js';
@@ -101,8 +101,14 @@ async function renderCheckin() {
   // 1. the bank file
   const w = c.bank.waiting[0];
   const fresh = c.plaid_new || 0;     // postings the daily bank sync stored that no upload has taken yet
+  // the bank's balance differs from the checkbook's and the new postings do not explain it: say why (pending, or not sent yet)
+  const gap = c.plaid_balance && ['pending', 'unexplained'].includes(c.plaid_balance.reason)
+    ? [el('p', { class: 'small', text: c.plaid_balance.message }),
+      // the bank is ahead and Plaid has not sent why: offer Plaid's paid refresh, where the server turned it on
+      c.plaid_refresh && c.plaid_balance.reason === 'unexplained' && can('editor')
+        ? el('button', { class: 'btn', type: 'button', text: 'Refresh from the bank now', onclick: (ev) => syncBank(ev.currentTarget, true) }) : null] : [];
   const plaidBad = (c.plaid_problems || []).map((p) => el('p', { class: 'msg err small' }, (p.institution || 'Bank') + ': ' + p.message + ' ',
-    el('a', { href: h + 'connections', text: 'Bank connection' })));
+    el('a', { href: h + 'connections', text: 'Bank connection' }))).concat(gap);
   const bank = c.plaid && fresh && can('editor')
     ? step(1, 'Bring in the new bank transactions', false, ...plaidBad,
       el('p', { class: 'small', text: fresh + ' new transaction' + (fresh === 1 ? '' : 's') + ' from the daily bank sync. They come in as one upload to review.' }),
@@ -122,7 +128,7 @@ async function renderCheckin() {
   };
   const due = step(2, 'Schedule what is due in the next ' + c.due_days + ' days', c.due.length === 0,
     c.due.length ? el('ul', { class: 'list plain' }, ...c.due.map((r) => el('li', { class: 'item' },
-      el('span', { class: 'what' }, el('b', { text: r.name }), el('span', { class: 'small ' + (r.late ? 'late' : 'muted'), text: (r.late ? 'Late · was due ' : 'Due ') + fmtD(r.due) + ' · ' + money(r.amount) })),
+      el('span', { class: 'what' }, el('b', {}, r.name, ...labelChips(r, c.cards)), el('span', { class: 'small ' + (r.late ? 'late' : 'muted'), text: (r.late ? 'Late · was due ' : 'Due ') + fmtD(r.due) + ' · ' + money(r.amount) })),
       can('contributor') ? el('span', { class: 'row-actions' },
         el('button', { class: 'btn', type: 'button', text: 'Scheduled', onclick: (ev) => mark(r, 'manual', ev.currentTarget) }),
         el('button', { class: 'btn', type: 'button', text: 'Autopay', onclick: (ev) => mark(r, 'autopay', ev.currentTarget) })) : null)))
@@ -142,14 +148,15 @@ async function renderCheckin() {
   btn.textContent = c.done_this_week ? 'Check in again' : 'Done for this week';
 }
 // a bank linked through Plaid (docs/PLAID.md): the sync becomes a waiting bank upload, reviewed like a file
-async function syncBank(btn) {
+async function syncBank(btn, refresh) {
   try {
-    const r = await busy(btn, () => api('POST', '/plaid/sync', {}), 'Syncing…');
+    const r = await busy(btn, () => api('POST', refresh ? '/plaid/refresh' : '/plaid/sync', {}), refresh ? 'Asking the bank…' : 'Syncing…');
     const bad = r.problems.map((p) => (p.institution || 'Bank') + ': ' + p.message + (p.relink ? ' (sign in again on the Bank connection page)' : ''));
     if (r.bank || r.cards.length) { await renderCheckin(); if (!r.bank) say($('checkSteps'), 'New card purchases are on the Card page.', 'ok'); return; }
+    for (const n of r.refresh_notes || []) bad.push((n.institution || 'Bank') + ': ' + n.message);
     const text = bad.length ? bad.join(' ') : r.not_ready ? 'Plaid is still fetching your history; try again in a few minutes.'
       : 'Nothing new from the bank' + (r.pending ? ' (' + r.pending + ' pending until they post)' : '') + '.'
-        + (r.cards.length ? ' New card purchases are on the Card page.' : '');
+        + (r.balance && r.balance.message ? ' ' + r.balance.message : '');
     say(btn, text, bad.length ? 'err' : 'ok');
   } catch (e) { say(btn, e.message, 'err'); }
 }

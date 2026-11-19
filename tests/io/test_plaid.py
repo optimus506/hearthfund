@@ -52,6 +52,22 @@ def test_bank_file_works_balances_back_from_the_current_balance() -> None:
     assert (bf.first, bf.last) == (D(2029, 3, 1), D(2029, 3, 5))
 
 
+def test_balance_gap_says_what_explains_a_difference() -> None:
+    # amounts are bank sign, newest first; the checkbook stands at 100000
+    assert pl.balance_gap(100000, 100000, [-2000, 5000], [700]) == pl.Gap(0, 'agree', 0, 1, 700)
+    # the two newest postings lead from the checkbook to the bank: +25000 pay, -5000 fuel (older ones are behind it)
+    assert pl.balance_gap(120000, 100000, [-5000, 25000, -1000]) == pl.Gap(20000, 'postings', 2)
+    assert pl.balance_gap(99000, 100000, [-1000]) == pl.Gap(-1000, 'postings', 1)        # the oldest one closes it
+    # the bank already counts a pending deposit that Plaid has not sent as posted
+    assert pl.balance_gap(125000, 100000, [-1000], [25000]) == pl.Gap(25000, 'pending', 0, 1, 25000)
+    assert pl.balance_gap(123000, 100000, [-2000, -1000], [25000]).reason == 'pending'   # one new posting as well
+    assert pl.balance_gap(123000, 100000, [-2000, -1000], [25000]).postings == 1
+    # nothing stored explains it: a posting has not been sent yet
+    assert pl.balance_gap(125000, 100000, []) == pl.Gap(25000, 'unexplained')
+    assert pl.balance_gap(125000, 100000, [-1000], [-999]) == pl.Gap(25000, 'unexplained', 0, 1, -999)
+    assert pl.balance_gap(125000, 100000, [], [10000, -10000]).reason == 'unexplained'   # pending that nets to zero
+
+
 def test_bank_file_drops_balances_that_do_not_line_up() -> None:
     txns = [('a', D(2029, 3, 1), -1000, 'A')]
     bf, ok = pl.bank_file(txns, 10500, 12345)
@@ -123,3 +139,26 @@ def test_parse_account_keeps_what_the_app_needs() -> None:
     assert len(a.name) == 80
     bare = pl.parse_account({'account_id': 7, 'balances': None})
     assert (bare.account_id, bare.name, bare.mask, bare.current) == ('7', '', '', None)
+
+
+def test_liabilities_are_parsed_without_account_numbers_or_addresses() -> None:
+    from datetime import date
+
+    from hbudget.io.plaid import Liability, PlaidError, parse_liabilities
+    raw = {'credit': [{'account_id': 'c', 'aprs': [{'apr_type': 'purchase_apr', 'apr_percentage': 15.24}],
+                       'minimum_payment_amount': 20, 'next_payment_due_date': '2029-05-28',
+                       'last_statement_balance': 1708.77},
+                      {'account_id': 'd', 'aprs': [{'apr_type': 'cash_apr', 'apr_percentage': 300}]}],
+           'mortgage': [{'account_id': 'm', 'account_number': '3120194154', 'interest_rate': {'percentage': 3.99},
+                         'next_monthly_payment': 3141.54, 'next_payment_due_date': '2029-04-01',
+                         'property_address': {'postal_code': '99999'}}],
+           'student': [{'account_id': 's', 'interest_rate_percentage': 5.25, 'minimum_payment_amount': None,
+                        'next_payment_due_date': 'soon'}, {'account_id': None}],
+           'loan': [{'account_id': 'x'}]}
+    assert parse_liabilities(raw) == [
+        Liability('c', 1524, 2000, date(2029, 5, 28), 170877), Liability('d'),
+        Liability('m', 399, 314154, date(2029, 4, 1)), Liability('s', 525)]
+    assert '3120194154' not in repr(parse_liabilities(raw)) and '99999' not in repr(parse_liabilities(raw))
+    assert parse_liabilities({}) == []
+    assert 'HBUDGET_PLAID_LIABILITIES' in PlaidError('PRODUCT_NOT_ENABLED', 'x').liabilities_note
+    assert PlaidError('OTHER', 'Plaid said no.').liabilities_note == 'Plaid said no.'

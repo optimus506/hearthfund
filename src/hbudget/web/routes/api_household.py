@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Literal, TypeVar
@@ -14,9 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from hbudget import __version__
 from hbudget.core import alerts as alerts_mod
-from hbudget.core import cards, checkup, flow, ledger, models, payoff, rules, subscriptions
+from hbudget.core import cards, checkup, debtcheck, flow, investments, ledger, models, payoff, rules, subscriptions
 from hbudget.core import forecast as fc
 from hbudget.core import goals as goals_mod
+from hbudget.core import labels as label_rules
 from hbudget.core import milestones as milestones_mod
 from hbudget.core import recap as recap_mod
 from hbudget.core.dates import add_months
@@ -261,11 +262,13 @@ CHANGE_WORDS = {
     'series.seasonal': 'set seasonal amounts for', 'series.amount': 'changed the amount of',
     'reconcile.apply': 'reconciled a bank file', 'reconcile.undo': 'undid a reconciliation',
     'upload.bank': 'uploaded a bank file', 'upload.card': 'uploaded a card file',
-    'plaid.sync': 'synced with the bank', 'plaid.link': 'linked a bank', 'plaid.unlink': 'unlinked a bank',
+    'plaid.sync': 'synced with the bank',
+    'plaid.refresh': 'asked the bank for a refresh', 'plaid.link': 'linked a bank', 'plaid.unlink': 'unlinked a bank',
     'plaid.enable': 'turned on the bank connection', 'plaid.disable': 'turned off the bank connection',
     'plaid.role': 'changed a linked account',
     'alert.snooze': 'set aside an alert', 'alert.unsnooze': 'brought back an alert',
     'account.add': 'added the debt', 'account.edit': 'updated the debt', 'account.delete': 'deleted the debt',
+    'account.balances': 'updated debt balances', 'account.paid_by': 'linked a debt to its bill',
     'rule.add': 'added the rule', 'rule.edit': 'changed the rule', 'rule.delete': 'deleted the rule',
     'expected.add': 'added an expected item', 'expected.status': 'marked an expected item',
     'settings.save': 'changed the settings', 'notes.save': 'edited the notes', 'checkin.done': 'checked in',
@@ -328,7 +331,7 @@ def get_checkin(request: Request, m: Viewer) -> dict[str, Any]:
     end = m.today + timedelta(days=CHECKIN_DUE_DAYS)
     due = [views.row(r, by_id, None, today=m.today) for r in ledger.ordered(b.rows)
            if r.state is RowState.OPEN and r.kind is Kind.BILL and r.amount > 0 and r.due_date <= end
-           and models.row_status(r, by_id) is Status.NONE]
+           and models.row_status(r, by_id) is Status.NONE and models.needs_scheduling(r, by_id)]
     return {
         'week_start': views.iso(week),
         'done_this_week': any(a['at'][:10] >= week.isoformat() for a in checkins),
@@ -337,19 +340,21 @@ def get_checkin(request: Request, m: Viewer) -> dict[str, Any]:
         'your_last': since,
         'bank': {'reconciled_through': views.iso(b.last_reconciled_through),
                  'waiting': [{'id': u.id, 'filename': u.filename, 'date_to': views.iso(u.date_to)} for u in waiting]},
-        'due': due, 'due_days': CHECKIN_DUE_DAYS, 'changes': changes, 'more_changes': len(changes) == 20,
+        'due': due, 'due_days': CHECKIN_DUE_DAYS, 'cards': views.card_names(b),
+        'changes': changes, 'more_changes': len(changes) == 20,
         # a bank linked through Plaid (docs/PLAID.md): step 1 offers "Sync with the bank" next to the upload
         'plaid': linked,
-        **(_plaid_checkin(m, b) if linked else {}),
+        **(_plaid_checkin(m, b, request.app.state.settings.plaid_refresh) if linked else {}),
     }
 
 
-def _plaid_checkin(m: Member, b: Budget) -> dict[str, Any]:
+def _plaid_checkin(m: Member, b: Budget, refresh: bool = False) -> dict[str, Any]:
     """What the daily sync left for the check-in: postings no upload has taken yet, and banks that need attention."""
     from hbudget.db import plaid as pdb
     from hbudget.web.routes import plaid
 
     return {'plaid_new': plaid.waiting_count(m.conn, m.hid, b.last_reconciled_through),
+            'plaid_balance': plaid.balance(m, b), 'plaid_refresh': refresh,
             'plaid_problems': [{'institution': it.institution, 'message': it.last_error}
                                for it in pdb.items(m.conn, m.hid) if it.last_error]}
 
@@ -413,6 +418,30 @@ def row_note(row_id: str, body: RowNoteBody, m: Contributor) -> dict[str, Any]:
         return replace(b, rows=tuple(replace(r, note=note) if r.id == row_id else r for r in b.rows))
     edit(m, 'row.note', fn, row_id)
     return {'id': row_id, 'note': note}
+
+
+class RowLabelsBody(Body):
+    labels: list[Annotated[str, Field(max_length=60)]] = Field(max_length=20)
+
+
+def _labels(values: Iterable[str]) -> tuple[str, ...]:
+    try:
+        return label_rules.clean(values)
+    except ValueError as e:
+        raise ApiError(400, 'invalid', str(e)) from None
+
+
+@router.post('/rows/{row_id}/labels')
+def row_labels(row_id: str, body: RowLabelsBody, m: Contributor) -> dict[str, Any]:
+    """This row's own labels (D-104), shown after its recurring item's; an empty list clears them."""
+    labels = _labels(body.labels)
+
+    def fn(b: Budget) -> Budget:
+        need(any(r.id == row_id for r in b.rows))
+        return replace(b, rows=tuple(replace(r, labels=labels) if r.id == row_id else r for r in b.rows))
+    b = edit(m, 'row.labels', fn, row_id)
+    r = next(r for r in b.rows if r.id == row_id)
+    return {'id': row_id, 'labels': list(label_rules.shown(r, b.series_by_id())), 'own_labels': list(labels)}
 
 
 class ChangeBody(Body):
@@ -652,6 +681,8 @@ class SeriesBody(Body):
     group: str | None = Field(default=None, max_length=40)
     active: bool = True
     notes: str | None = Field(default=None, max_length=1000)   # None keeps the item's notes
+    labels: list[Annotated[str, Field(max_length=60)]] | None = Field(default=None, max_length=20)   # None keeps
+    no_schedule: bool | None = None                             # None keeps
 
 
 def _check_debt(b: Budget, debt: str | None) -> None:
@@ -665,7 +696,8 @@ def _schedule(s: ScheduleBody) -> Schedule:
         raise ApiError(400, 'invalid', 'The two days of a twice-a-month item must differ.')
     if s.end and s.end < s.start:
         raise ApiError(400, 'invalid', 'The last date is before the first date.')
-    return Schedule(Cadence(s.cadence), s.start, s.end, s.interval, s.day,
+    interval = s.interval if s.cadence in ('weekly', 'monthly') else 1   # the other cadences have no "every N"
+    return Schedule(Cadence(s.cadence), s.start, s.end, interval, s.day,
                     (s.days[0], s.days[1]) if s.days else None, s.month, Weekend(s.weekend))
 
 
@@ -679,7 +711,7 @@ def series_add(body: SeriesBody, m: Editor) -> dict[str, Any]:
     sid = new_id('series', body.name)
     s = Series(sid, body.name, Kind(body.kind), body.amount, _schedule(body.schedule), funded_by=body.funded_by,
                status=Status(body.status), card=body.card, debt=body.debt, group=body.group, active=body.active,
-               notes=body.notes or '')
+               notes=body.notes or '', labels=_labels(body.labels or ()), no_schedule=bool(body.no_schedule))
 
     def fn(b: Budget) -> Budget:
         if body.funded_by and body.funded_by not in b.series_by_id():
@@ -693,6 +725,7 @@ def series_add(body: SeriesBody, m: Editor) -> dict[str, Any]:
 @router.put('/series/{series_id}')
 def series_edit(series_id: str, body: SeriesBody, m: Editor) -> dict[str, Any]:
     sched = _schedule(body.schedule)
+    labels = _labels(body.labels or ())
 
     def fn(b: Budget) -> Budget:
         by_id = b.series_by_id()
@@ -708,7 +741,9 @@ def series_edit(series_id: str, body: SeriesBody, m: Editor) -> dict[str, Any]:
         _check_debt(b, debt)
         new = replace(old, name=body.name, kind=Kind(body.kind), amount=body.amount, schedule=sched,
                       funded_by=body.funded_by, status=Status(body.status), card=body.card, debt=debt,
-                      group=body.group, active=body.active, notes=old.notes if body.notes is None else body.notes)
+                      group=body.group, active=body.active, notes=old.notes if body.notes is None else body.notes,
+                      labels=old.labels if body.labels is None else labels,
+                      no_schedule=old.no_schedule if body.no_schedule is None else body.no_schedule)
         b = replace(b, series=tuple(new if s.id == series_id else s for s in b.series))
         if (new.amount, new.schedule, new.active) == (old.amount, old.schedule, old.active):
             # only the name, card, status, group, notes or "paid from" changed: keep the rows' amounts (#24)
@@ -819,7 +854,89 @@ def _account(aid: str, body: AccountBody, today: date) -> Account:
 def accounts_list(m: Viewer) -> dict[str, Any]:
     b = load(m)
     hist = history(m) if any(s.debt for s in b.series) else []
-    return {'accounts': [views.account(a, payoff.estimate(a, b, hist, today=m.today)) for a in b.accounts]}
+    kept = repo.debt_sources(m.conn, m.hid)
+    paid_by: dict[str, list[str]] = {}
+    for s in b.series:
+        if s.debt and s.active:
+            paid_by.setdefault(s.debt, []).append(s.name)
+    until = debtcheck.snoozed_until(b)
+    return {'accounts': [{**views.account(a, payoff.estimate(a, b, hist, today=m.today)),
+                          # who keeps the balance: a linked bank account, or the household (typed)
+                          'source': 'bank' if a.id in kept else 'typed', 'bank': kept.get(a.id),
+                          'paid_by': paid_by.get(a.id, [])} for a in b.accounts],
+            # the reminder to update typed balances (D-105): how old is too old, who is due, and any "later"
+            'reminder': {'days': b.settings.alerts.debt_update_days,
+                         'stale': [a.id for a in debtcheck.stale(b.accounts, m.today,
+                                                                 b.settings.alerts.debt_update_days)],
+                         'snoozed_until': views.iso(until) if until and until > m.today else None}}
+
+
+class BalanceItem(Body):
+    id: Annotated[str, Field(max_length=120)]
+    balance: Money
+    as_of: date | None = None
+
+
+class BalancesBody(Body):
+    items: list[BalanceItem] = Field(min_length=1, max_length=100)
+
+
+@router.post('/accounts/balances')
+def account_balances(body: BalancesBody, m: Editor) -> dict[str, Any]:
+    """New balances for several debts at once, each with its date (today when left out): the quick form behind the
+    reminder (D-105). One change; the earlier balances go to the history as with a single edit."""
+    days = {it.id: _balance_day(m, it.as_of) for it in body.items}
+
+    def fn(b: Budget) -> Budget:
+        by_id = {a.id: a for a in b.accounts}
+        for it in body.items:
+            old = by_id.get(it.id)
+            if old is None or old.kind in payoff.NOT_DEBTS:
+                raise ApiError(404, 'not_found', 'No debt with the id %s.' % it.id)
+            by_id[it.id] = payoff.record(old, replace(old, balance=it.balance, as_of=days[it.id]))
+        return replace(b, accounts=tuple(by_id[a.id] for a in b.accounts))
+    edit(m, 'account.balances', fn, None)
+    return {'ok': True, 'updated': len(body.items)}
+
+
+class PaidByBody(Body):
+    series_id: Annotated[str, Field(max_length=120)] | None
+
+
+@router.put('/accounts/{account_id}/paid-by')
+def account_paid_by(account_id: str, body: PaidByBody, m: Editor) -> dict[str, Any]:
+    """Say which recurring bill pays this debt down, from the Debts page (D-105): its reconciled payments then move
+    the estimate between balance updates (#97). null takes every such link off the debt."""
+    def fn(b: Budget) -> Budget:
+        if not any(a.id == account_id and a.kind not in payoff.NOT_DEBTS for a in b.accounts):
+            raise ApiError(404, 'not_found', 'No debt with that id.')
+        s = b.series_by_id().get(body.series_id) if body.series_id else None
+        if body.series_id and (s is None or s.kind is not Kind.BILL):
+            raise ApiError(400, 'invalid', 'No recurring bill with that id.')
+        return replace(b, series=tuple(
+            replace(x, debt=account_id) if x.id == body.series_id
+            else replace(x, debt=None) if x.debt == account_id and body.series_id is None else x for x in b.series))
+    edit(m, 'account.paid_by', fn, account_id)
+    return {'ok': True}
+
+
+class LaterBody(Body):
+    days: Annotated[int, Field(ge=0, le=90)] = debtcheck.SNOOZE_DAYS
+
+
+@router.put('/accounts/reminder/later')
+def debt_reminder_later(body: LaterBody, m: Contributor) -> dict[str, Any]:
+    """Put the "update the debt balances" reminder off for some days (two weeks unless told otherwise); 0 brings
+    it back now."""
+    until = m.today + timedelta(days=body.days)
+
+    def fn(b: Budget) -> Budget:
+        rest = tuple(x for x in b.settings.alert_snoozes if (x[0], x[1]) != debtcheck.SNOOZE)
+        if body.days:
+            rest = (*rest, (*debtcheck.SNOOZE, until))
+        return replace(b, settings=replace(b.settings, alert_snoozes=rest))
+    edit(m, 'alert.snooze' if body.days else 'alert.unsnooze', fn)
+    return {'snoozed_until': views.iso(until) if body.days else None}
 
 
 @router.post('/accounts')
@@ -836,8 +953,12 @@ def account_edit(account_id: str, body: AccountBody, m: Editor) -> dict[str, Any
 
     def fn(b: Budget) -> Budget:
         old = next((a for a in b.accounts if a.id == account_id), None)
-        need(old is not None)
-        new = payoff.record(old, acct)
+        need(old is not None and old.kind is not AccountKind.INVESTMENT)    # those have their own page and API
+        assert old is not None
+        # a change to the name, the rate or the payment is not a look at the statement: the balance keeps its
+        # date unless the balance changed or a date was sent (D-105: the reminder goes by that date)
+        keep = body.as_of is None and body.balance == old.balance
+        new = payoff.record(old, replace(acct, as_of=old.as_of) if keep else acct)
         return replace(b, accounts=tuple(new if a.id == account_id else a for a in b.accounts))
     edit(m, 'account.edit', fn, account_id)
     return {'ok': True}
@@ -846,10 +967,182 @@ def account_edit(account_id: str, body: AccountBody, m: Editor) -> dict[str, Any
 @router.delete('/accounts/{account_id}')
 def account_delete(account_id: str, m: Editor) -> dict[str, Any]:
     def fn(b: Budget) -> Budget:
-        need(any(a.id == account_id for a in b.accounts))
+        need(any(a.id == account_id and a.kind is not AccountKind.INVESTMENT for a in b.accounts))
         return replace(b, accounts=tuple(a for a in b.accounts if a.id != account_id))
     edit(m, 'account.delete', fn, account_id)
     return {'ok': True}
+
+
+# ---------------------------------------------------------------- investments (D-102)
+
+class InvestmentBody(Body):
+    name: Name
+    balance: Money
+    as_of: date | None = None
+    notes: str = Field(default='', max_length=1000)
+
+
+class InvestmentEdit(Body):
+    name: Name
+    notes: str = Field(default='', max_length=1000)
+
+
+class InvestmentBalance(Body):
+    balance: Money
+    as_of: date | None = None
+
+
+def _plain_name(name: str) -> str:
+    import re
+    if re.search(r'\d{6,}', name):
+        raise ApiError(400, 'invalid', 'Leave card and account numbers out of the name.')
+    return ' '.join(name.split())
+
+
+def _balance_day(m: Member, day: date | None) -> date:
+    if day is not None and day > m.today:
+        raise ApiError(400, 'invalid', 'A balance cannot be dated after today.')
+    return day or m.today
+
+
+def _investment(b: Budget, account_id: str) -> Account:
+    a = next((x for x in b.accounts if x.id == account_id and x.kind is AccountKind.INVESTMENT), None)
+    if a is None:
+        raise ApiError(404, 'not_found', 'No investment account with that id.')
+    return a
+
+
+def _swap(b: Budget, new: Account) -> Budget:
+    return replace(b, accounts=tuple(new if a.id == new.id else a for a in b.accounts))
+
+
+@router.get('/investments')
+def investments_list(m: Viewer) -> dict[str, Any]:
+    return views.investments(investments.summary(load(m).accounts, m.today),
+                             repo.investment_sources(m.conn, m.hid), today=m.today)
+
+
+@router.post('/investments')
+def investment_add(body: InvestmentBody, m: Editor) -> dict[str, Any]:
+    aid = new_id('inv', body.name)
+    day = _balance_day(m, body.as_of)
+    acct = investments.record(Account(aid, _plain_name(body.name), AccountKind.INVESTMENT, include_in_payoff=False,
+                                      notes=body.notes), day, body.balance, m.today)
+    edit(m, 'investment.add', lambda b: replace(b, accounts=(*b.accounts, acct)), aid)
+    return {'id': aid}
+
+
+@router.put('/investments/{account_id}')
+def investment_edit(account_id: str, body: InvestmentEdit, m: Editor) -> dict[str, Any]:
+    name = _plain_name(body.name)
+    edit(m, 'investment.edit', lambda b: _swap(b, replace(_investment(b, account_id), name=name, notes=body.notes)),
+         account_id)
+    return {'ok': True}
+
+
+@router.post('/investments/{account_id}/balance')
+def investment_balance(account_id: str, body: InvestmentBalance, m: Editor) -> dict[str, Any]:
+    """Note a balance for a date (today when left out). An older date fills the history; the account's current
+    balance stays the one of the newest date."""
+    day = _balance_day(m, body.as_of)
+    b = edit(m, 'investment.balance',
+             lambda b: _swap(b, investments.record(_investment(b, account_id), day, body.balance, m.today)), account_id)
+    a = _investment(b, account_id)
+    return {'id': a.id, 'balance': a.balance, 'as_of': views.iso(a.as_of)}
+
+
+@router.delete('/investments/{account_id}/balance/{day}')
+def investment_balance_forget(account_id: str, day: date, m: Editor) -> dict[str, Any]:
+    def fn(b: Budget) -> Budget:
+        old = _investment(b, account_id)
+        new = investments.forget(old, day)
+        if new is old:
+            raise ApiError(400, 'invalid', 'No balance on that date, or it is the only one: an account keeps one.')
+        return _swap(b, new)
+    edit(m, 'investment.balance_remove', fn, account_id)
+    return {'ok': True}
+
+
+@router.delete('/investments/{account_id}')
+def investment_delete(account_id: str, m: Editor) -> dict[str, Any]:
+    def fn(b: Budget) -> Budget:
+        _investment(b, account_id)
+        return replace(b, accounts=tuple(a for a in b.accounts if a.id != account_id))
+    edit(m, 'investment.delete', fn, account_id)
+    return {'ok': True}
+
+
+INVEST_EXT = ('.csv', '.ods', '.xlsx', '.ofx', '.qfx')
+
+
+@router.post('/investments/file')
+async def investment_file(request: Request, m: Editor, file: Annotated[UploadFile, File()]) -> dict[str, Any]:
+    """Read a broker's or a plan's file and show what it holds (D-103). Nothing is stored: the page sends back the
+    balances the user chose, to /investments/import. Balances after today or below zero are left out."""
+    from hbudget.io.investfile import read_invest_file
+    data, name = await read_upload(request, file, INVEST_EXT)
+    try:
+        got = await time_limited(request, lambda: read_invest_file(data, name))
+    except ImportProblem as e:
+        raise ApiError(400, 'import', str(e)) from None
+    mine = {a.name.casefold(): a.id for a in investments.held(load(m).accounts)}
+    skipped = got.skipped
+    readings = []
+    for r in got.readings:
+        ok = [(d or m.today, v) for d, v in r.points if v >= 0 and (d is None or d <= m.today)]
+        skipped += len(r.points) - len(ok)
+        pts = investments.thin(ok, m.today)
+        if pts:
+            readings.append({'label': r.label, 'dated': all(d is not None for d, _ in r.points),
+                             'points': [[d.isoformat(), v] for d, v in pts], 'found': len(ok),
+                             'holdings': r.holdings, 'cash': r.cash, 'match': mine.get(r.label.casefold())})
+    if not readings:
+        raise ApiError(400, 'import', 'The file holds no balance dated today or earlier.')
+    return {'kind': got.kind, 'file': name, 'readings': readings, 'skipped': skipped, 'today': m.today.isoformat()}
+
+
+class ImportPoint(Body):
+    as_of: date
+    balance: Money
+
+
+class ImportItem(Body):
+    account_id: Annotated[str, Field(max_length=120)] | None = None    # an existing account, or:
+    name: Name | None = None                                           # a new one
+    points: list[ImportPoint] = Field(min_length=1, max_length=investments.HISTORY_MAX)
+
+
+class InvestmentImport(Body):
+    items: list[ImportItem] = Field(min_length=1, max_length=20)
+
+
+@router.post('/investments/import')
+def investment_import(body: InvestmentImport, m: Editor) -> dict[str, Any]:
+    """Store the balances read from a file: into existing accounts, or into new ones. One change, one audit entry."""
+    made: list[str] = []
+    for it in body.items:
+        if (it.account_id is None) == (it.name is None):
+            raise ApiError(400, 'invalid', 'Give each set of balances an account, or a name for a new one.')
+        for p in it.points:
+            _balance_day(m, p.as_of)
+
+    def fn(b: Budget) -> Budget:
+        made.clear()
+        for it in body.items:
+            if it.account_id is not None:
+                acct = _investment(b, it.account_id)
+            else:
+                assert it.name is not None
+                acct = Account(new_id('inv', it.name), _plain_name(it.name), AccountKind.INVESTMENT,
+                               include_in_payoff=False)
+                b = replace(b, accounts=(*b.accounts, acct))
+                made.append(acct.id)
+            for p in sorted(it.points, key=lambda p: p.as_of):
+                acct = investments.record(acct, p.as_of, p.balance, m.today)
+            b = _swap(b, acct)
+        return b
+    edit(m, 'investment.import', fn, None)
+    return {'ok': True, 'accounts': len(body.items), 'added': made, 'balances': sum(len(i.points) for i in body.items)}
 
 
 class PayoffBody(Body):
@@ -1159,7 +1452,8 @@ def rules_list(m: Viewer) -> dict[str, Any]:
                          'alerts': {'cushion': s.alerts.cushion, 'bill_variance_bp': s.alerts.bill_variance_bp,
                                     'unscheduled_days': s.alerts.unscheduled_days,
                                     'expected_grace_days': s.alerts.expected_grace_days,
-                                    'unmatched_recurring': s.alerts.unmatched_recurring},
+                                    'unmatched_recurring': s.alerts.unmatched_recurring,
+                                    'debt_update_days': s.alerts.debt_update_days},
                          'status_colours': {str(k): v for k, v in s.status_colours}, 'celebrate': s.celebrate,
                          'card_transfers_on_payday': s.card_transfers_on_payday},
             'horizon': {'mode': b.horizon.mode, 'months': b.horizon.months, 'end': views.iso(b.horizon.end)},
@@ -1289,6 +1583,7 @@ class AlertsBody(Body):
     unscheduled_days: Annotated[int, Field(ge=0, le=60)]
     expected_grace_days: Annotated[int, Field(ge=0, le=60)]
     unmatched_recurring: bool
+    debt_update_days: Annotated[int, Field(ge=0, le=366)] | None = None   # None keeps it
     caps: list[CapBody] | None = Field(default=None, max_length=20)   # None keeps them (the Check-up page sets them)
 
 
@@ -1386,7 +1681,9 @@ def _apply_settings(b: Budget, body: SettingsBody) -> Budget:
         s, week_starts=body.week_starts,
         alerts=replace(s.alerts, cushion=a.cushion, bill_variance_bp=a.bill_variance_bp,
                        unscheduled_days=a.unscheduled_days, expected_grace_days=a.expected_grace_days,
-                       unmatched_recurring=a.unmatched_recurring, caps=caps),
+                       unmatched_recurring=a.unmatched_recurring, caps=caps,
+                       debt_update_days=s.alerts.debt_update_days if a.debt_update_days is None
+                       else a.debt_update_days),
         reconcile=replace(s.reconcile, days_before=body.reconcile.days_before, days_after=body.reconcile.days_after,
                           tolerance_bp=body.reconcile.tolerance_bp, tolerance_abs=body.reconcile.tolerance_abs),
         status_colours=((Status.AUTOPAY, body.status_colours.autopay.lower()),

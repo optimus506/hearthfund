@@ -11,7 +11,7 @@ from typing import Literal
 from .dates import add_months, week_start
 from .models import Budget, Cadence, CardCategory, CardTxn, LedgerRow, RowState, Schedule, Series
 from .money import Cents
-from .recurrence import Occurrence, amount_for, occurrences
+from .recurrence import Occurrence, amount_for, first_month, occurrences
 
 __all__ = ['DEFAULT_CATEGORIES', 'CardSummary', 'CardWeek', 'Period', 'Store', 'categorise', 'recategorise', 'spending',
            'store', 'stores', 'weekly']
@@ -191,6 +191,10 @@ def _back_to(sched: Schedule, before: date) -> Schedule:
         n = -(-(sched.start - before).days // step)
         return replace(sched, start=sched.start - timedelta(days=n * step))
     day = sched.day or sched.start.day       # monthly and the rest: from the first of that month, same day(s)
+    if sched.cadence is Cadence.MONTHLY and sched.interval > 1:   # every N months: keep the same months
+        first = first_month(sched)
+        index = first - sched.interval * -(-(first - (before.year * 12 + before.month - 1)) // sched.interval)
+        return replace(sched, start=date(index // 12, index % 12 + 1, 1), day=day)
     return replace(sched, start=date(before.year, before.month, 1), day=day if sched.cadence is not
                    Cadence.SEMIMONTHLY else sched.day)
 

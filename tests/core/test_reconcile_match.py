@@ -28,7 +28,7 @@ def test_full_scenario():
     assert [(u.txn_id, u.reason) for u in r.unknown] == [
         ('t6', 'no rule matches this payee'),
         ('t9', 'unexpected direction for electric (refund?)'),
-        ('t10', 'card payment, but no open card-funded rows dated on or before it')]
+        ('t10', 'card payment, but no open card-funded rows dated up to 7 days after it')]
 
 
 def mini(rows, rules, items, start=100000):

@@ -776,7 +776,7 @@ tracker; those issues are not public, and the public tracker numbers its issues 
   the forecast. Allowance matches do not raise bill-variance alerts, and the check-up compares the monthly total with
   the row. Telling one-off purchases through the same payee apart uses the existing amount bounds: one rule per
   amount (`min_amount` = `max_amount`), ahead of a `track` rule for the rest.
-- **Why:** a subscription bundle, a fuel or grocery envelope or a school-lunch account is budgeted as one monthly row
+- **Why:** a subscription bundle, a fuel or grocery envelope or a school cafeteria account is budgeted as one monthly row
   but paid in several debits. As `bill` the first debit cleared the whole row or fell out of tolerance; as `ask` each
   debit needed a decision, and nothing offered to release the leftover. Releasing stays a person's choice because
   a late charge for the month can still arrive.
@@ -1125,3 +1125,160 @@ tracker; those issues are not public, and the public tracker numbers its issues 
   and could probe which usernames exist. On a server shared by several households, joining another household
   should go through the person who runs the server. Decided by the owner of the project on 2026-11-10.
 - **Alternatives:** an invitation the user accepts (more pages and state for a rare case; possible later).
+
+## D-099 "Every N months" is Monthly with an interval, not a new cadence (2026-11-12)
+- **Decision:** a bill charged every three months is a `monthly` schedule with `interval` 3. The interval is
+  counted from the schedule's first occurrence (the start's month, or the next month when that month's day is
+  already past at the start). The form offers Every 2, 3 and 6 months as choices that fill the interval in;
+  the simple CSV also reads the word `quarterly`. For cadences other than weekly and monthly the API stores
+  interval 1. Migration 0015 sets leftover intervals on non-weekly items back to 1, because they were ignored
+  until now and those items must keep their dates.
+- **Why:** households have quarterly and twice-a-year bills (waste collection, insurance, dues). Without a
+  cadence for them the only way was one-off rows, which cannot take a price change, a status or notes once and
+  are not extended with the forecast. `interval` was already in the model, the database, the file format and
+  the API for weekly items, so one rule covers every 2, 3, 4 and 6 months with no new enum value and no
+  format change.
+- **Alternatives:** a `quarterly` cadence (a second value would be needed for every 2 or 6 months, and every
+  reader of the cadence list would change); naming the months, as `yearly` does with `month` (four fields to
+  keep in step for one bill).
+
+## D-100 A gap between the bank's balance and the checkbook is explained, not hidden (2026-11-12)
+- **Decision:** after a Plaid sync, on the Bank connection page and in the check-in, the linked checking
+  account's balance is compared with the checkbook's. The app names one of four cases: they agree; the newest
+  stored postings lead from one to the other; the pending transactions make up the rest; or nothing sent so far
+  explains it. To tell the third case, the amount and date of pending transactions are kept in `plaid_pending`
+  until Plaid withdraws them (it does when one posts); no description is stored, they never enter the budget,
+  and one older than 14 days is ignored. The same comparison is readable through the API and MCP.
+- **Why:** Plaid's balance can include a deposit hours before the posting is delivered. The sync then said
+  "Nothing new" while the page showed a balance the checkbook did not have, which reads as a mistake in the app.
+  Saying which case it is tells the household whether to review, wait or sync again.
+- **Alternatives:** showing only the two balances (the household still has to work out why); counting pending
+  transactions in the checkbook (they change or vanish, and reconciling is built on posted lines); keeping
+  pending descriptions too (not needed to explain an amount, so not stored).
+
+## D-101 An on-demand bank refresh is a server setting, off by default, one an hour per bank (2026-11-12)
+- **Decision:** "Refresh from the bank now" calls Plaid's `/transactions/refresh` and then the normal sync. It
+  exists only when the server sets `HBUDGET_PLAID_REFRESH=true`. Each linked bank can be refreshed once an hour;
+  the turn is taken before Plaid is called and given back when Plaid refuses. Refusals are told in plain words
+  and the sync still runs. Editors can use it, on the Bank connection page, in the check-in when a balance gap
+  is unexplained, and through `sync_bank` over the API and MCP. Every refresh is audited.
+- **Why:** a sync only reads what Plaid has fetched on its own schedule, so a household that reconciles on
+  payday can be a day behind the bank. The refresh closes that, but it is a Plaid add-on billed per request to
+  the Plaid account of whoever runs the server, and not every plan or bank has it. So that person decides, and
+  a button cannot run up a bill by being pressed repeatedly.
+- **Alternatives:** always showing the button and learning from Plaid's error whether it is available (the
+  first press of a working one already costs money); a per-household switch (the household does not hold the
+  Plaid account); webhooks to learn when new data is ready (the server would have to be reachable from the
+  internet, D-091).
+
+## D-102 Investments are a summary of balances by date, kept apart from the budget (2026-11-15)
+- **Decision:** Money > Investments shows what the investment and retirement accounts hold and how that changed.
+  An investment account is an account of the kind `investment` with dated balances (its history): typed in, or
+  noted at each sync from a linked Plaid account the owner set to "Investment". It is left out of everything
+  that treats accounts as debts (Debts, the payoff plan, the debt-free goal, milestones, `get_debts`) and has no
+  part in the forecast. A change over a period is the newest balance less the balance known at the start of the
+  period, and the page says that this includes money paid in or taken out. Balances are thinned as they age
+  (daily for 45 days, weekly for two years, then monthly; the first is always kept; 400 at most).
+- **Why:** the household asked for a board that shows growth and amounts over time, and explicitly not for
+  planning or a breakdown. Balances by date are enough for that and can be had without a new Plaid product:
+  `/accounts/get`, which every sync already calls and Plaid does not charge for, returns the value of an
+  investment account. Reusing the accounts table puts investments in backups, restore, wipe and exports with
+  no new format. The balance a sync notes updates one row without an audit entry or a new budget version, so a
+  daily sync neither fills the log nor makes open pages look stale.
+- **Alternatives:** Plaid's Investments product (holdings, investment transactions, so contributions could be
+  told from market moves): a paid subscription per linked institution and far more data than a summary needs;
+  it stays possible later for institutions that cannot be linked with Transactions alone. A separate table of
+  daily snapshots: unlimited history, but new backup and restore plumbing for little gain. Counting investments
+  in a net-worth figure with the debts: not asked for, and mixing typed, estimated and synced balances of
+  different dates into one number would look more exact than it is.
+
+## D-103 Investment files give dates and totals, shown before they are saved (2026-11-16)
+- **Decision:** Money > Investments reads three kinds of file (`io/investfile.py`): an OFX / QFX investment
+  statement (the statement date; the plan's own total when it has one, else the market value of the positions
+  plus the available cash; a bank statement's ledger balance when there are no investments in it), a table with
+  a date column (one balance per date, for one account, per account column or per value of an account column),
+  and a table of holdings without dates (the values added up per account, dated today unless the user says
+  otherwise). The upload stores nothing. The page shows what was read; the user picks an existing account, a
+  new one or "leave out" per account in the file, may correct a single balance and its date, and only then are
+  the balances saved, as one change with one audit entry. Holdings, quantities, prices and transactions are
+  never kept, and an account's label keeps at most its last four digits.
+- **Why:** the household's accounts sit at several brokers and plan administrators, and a file is the way to get
+  their figures in without a paid product or a connection per institution; it matches how bank files already
+  come in. A preview before saving is needed because the formats are loose: a statement may count its cash
+  among the positions as well (the page shows both parts so a wrong sum is seen), and a positions file has no
+  date. Keeping only dates and totals keeps D-102's promise that this is a summary.
+- **Alternatives:** saved column layouts as for bank files: more to set up than the files need so far, and it
+  can follow once real files show what the guessing misses. Storing the file or its holdings to break the
+  account down: not what the page is for. Remembering which account a file's label went to: left for when the
+  household has used it for a while.
+
+## D-104 Labels are free text on items and rows; "nothing to schedule" is a switch on the item (2026-11-16)
+- **Decision:** A recurring item has up to 5 labels of at most 24 characters, typed freely; a row shows its
+  item's labels and then its own. They are chips beside the name on Bills, in the bill finder and in the Home
+  check-in, and they are in the agent API, MCP and backups. A row paid with a credit card gets an "on (card)"
+  chip without any typing. Nothing in the forecast or the alerts reads a label. Apart from that, a recurring
+  item can be marked "nothing to schedule": its rows are left out of the "not scheduled" alert, the summary
+  count and the check-in list. A row of such an item can still be marked by hand.
+- **Why:** the household wanted to see at a glance how a row gets paid and that it is not counted twice,
+  and other households will name things their own way, so a fixed list would fit only one of them.
+  Keeping labels without meaning keeps them safe to rename or drop. The monthly false alert for an allowance
+  needed a real rule, and a label must not be that rule: so it is its own switch.
+- **Alternatives:** a pick-list set up per household: one more thing to manage before the first label; the
+  forms offer the labels already in use instead. A fourth bill status "not needed": the status is also a
+  colour, a spreadsheet mapping and a per-row mark, and "never needs one" is a fact about the item, not a state
+  a row moves through. Copying the item's labels onto each row: they would go stale when the item's change.
+
+## D-105 Debt balances: a linked account may keep one, the rest get a reminder (2026-11-16)
+- **Decision:** A linked Plaid card or loan can be told to keep the balance of one debt; each sync then writes
+  the balance Plaid reports (`/accounts/get`), dated that day, as one row update without an audit entry, like
+  an investment balance (D-102). It is separate from the account's role, so a card linked for its purchases
+  can do both. For every other debt the household is reminded: when a debt that still owes something has a
+  balance older than `alerts.debt_update_days` (61 unless changed; 0 turns it off), Home shows one alert that
+  names the debts, with "Enter balances" (every typed debt on one screen on the Debts page) and "Remind me in
+  2 weeks" (kept in `alert_snoozes` as `debt_balances` / `until`). Editing a debt's details no longer re-dates
+  its balance. A promo rate ending within 60 days is its own alert (a note unless interest is deferred). A
+  debt can be linked to the recurring bill that pays it from the Debts page.
+- **Why:** typed debt balances went stale without anyone noticing, and a stale one can be off by a payment.
+  The owner chose: what comes in through Plaid stays with Plaid, no asking each time; the reminder is for the
+  rest, every two months by default, on Home, with a snooze. Because a kept balance is re-dated at every sync,
+  the reminder needs no knowledge of the bank connection: if the link breaks, the date ages and the same
+  reminder covers that debt.
+- **Alternatives:** offering the bank's balance for the household to accept each time: declined by the owner.
+  A reminder per debt: one alert for each debt on the day they all age out. Plaid Liabilities (rate, minimum, due date):
+  a further paid product that has to be turned on by the server and allowed by the household; it is a separate
+  step and not needed for the balance.
+
+## D-106 Plaid Liabilities is off twice over: the server allows it, the owner turns it on per bank (2026-11-16)
+- **Decision:** Rates, minimum payments and due dates come from Plaid's Liabilities product only when the
+  server sets `HBUDGET_PLAID_LIABILITIES` and an owner turned it on for that linked bank. Turning it on opens
+  Plaid Link in update mode with `additional_consented_products: ["liabilities"]`, so the bank's customer
+  allows it; the first `/liabilities/get` runs right after, so a bank without it says so at once. Each sync
+  then reads the four figures the app uses (rate, minimum, next due date, statement balance) and keeps them
+  per linked account. A debt whose balance the account keeps takes the rate and the minimum, without an audit
+  entry; the rate is left alone while the debt's promo runs. A refusal is a note on the bank's card and never
+  fails the sync. Turning it off stops the reads and forgets what was read.
+- **Why:** the household asked for it, and the owner wanted it available but as something a user has to turn on and
+  allow. It is a subscription per linked bank that starts with the first read and ends only when the bank is
+  unlinked, so nothing may call it by accident: not the server alone, not a new link, not a sync.
+- **Alternatives:** asking for Liabilities in the first link (`products`): it would limit Link to banks that
+  support it and bill every household. Calling `/liabilities/get` without the consent step: Plaid requires the
+  added consent for most banks. Storing everything Plaid sends (account numbers, the property address of a
+  mortgage): not needed for the Debts page and against the rule to keep no account numbers.
+
+## D-107 The person can say which rows a bank line paid; card payments look a week ahead (2026-11-16)
+- **Decision:** In a dry run, any money-out bank line that is unmatched, or whose proposal is not right, can be
+  given rows by hand: the open bill and spending rows near it are listed (the card's own rows first for a card
+  payment) and the ticked ones are cleared by that line in the same reconciliation, so Undo reopens them
+  together. The rows may total less than the payment; the rest stays an unbudgeted payment. They may total
+  more only when one larger row keeps the rest: it takes what is left of the payment and stays open. Otherwise
+  Apply is refused. The same choice is `assign` in the API and the MCP tool. Separately, a card payment with
+  no card-funded row dated on or before it is now proposed against that card's rows dated up to 7 days after
+  it. It is a proposal like every card bundle, never automatic, and rows before the payment still win.
+- **Why:** A payment made a day before its rows was listed as unmatched with nothing to do about it. Apply
+  then lowered the balance and left the rows open, so the forecast counted the money twice until each row was
+  marked done on another page. The owner asked for the choice on every unmatched money-out line, not only card
+  payments, and for the rule on totals above.
+- **Alternatives:** Looking ahead for every card payment, also when earlier rows exist: it would pull next
+  cycle's rows into ordinary proposals. Letting the rows total more than the payment silently: the checkbook
+  would be right and the budget wrong. A date window on what the API accepts: the list on the page is limited
+  to keep it short, but an agent may name any open row.

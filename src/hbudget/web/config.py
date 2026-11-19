@@ -102,6 +102,8 @@ class Settings:
     # Plaid bank connection (docs/PLAID.md): off unless the server enables it; offline is the default
     plaid: PlaidMode = 'off'
     plaid_client_id: str | None = None
+    plaid_refresh: bool = False      # offer "Refresh from the bank now": Plaid's paid on-demand refresh add-on
+    plaid_liabilities: bool = False  # let an owner turn on Plaid Liabilities per bank (paid; D-106)
     plaid_secret: str | None = field(default=None, repr=False)
     # tests lower these; production keeps the documented values
     scrypt_n: int = 2 ** 15
@@ -214,6 +216,8 @@ class Settings:
             tls_key=_path(e, 'HBUDGET_TLS_KEY'),
             plaid=plaid,  # type: ignore[arg-type]
             plaid_client_id=(e.get('HBUDGET_PLAID_CLIENT_ID') or '').strip() or None,
+            plaid_refresh=plaid != 'off' and _bool(e, 'HBUDGET_PLAID_REFRESH', False),
+            plaid_liabilities=plaid != 'off' and _bool(e, 'HBUDGET_PLAID_LIABILITIES', False),
             plaid_secret=_secret(e, 'HBUDGET_PLAID_SECRET') if plaid != 'off' else None,
         )
         s.check()

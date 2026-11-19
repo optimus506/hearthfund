@@ -6,6 +6,8 @@ from typing import Any
 
 from hbudget.core import alerts as alerts_mod
 from hbudget.core import forecast as fc
+from hbudget.core import investments as inv
+from hbudget.core import labels as label_rules
 from hbudget.core import paydays
 from hbudget.core import payoff as po
 from hbudget.core.alerts import Alert
@@ -34,7 +36,7 @@ from hbudget.core.paydays import CardTransfer
 from hbudget.core.payoff import PayoffPlan, PayoffResult
 from hbudget.core.recap import Recap
 from hbudget.core.recap import Totals as RecapTotals
-from hbudget.core.reconcile import Prepared, ReconcileResult
+from hbudget.core.reconcile import Prepared, ReconcileResult, assignable
 from hbudget.core.subscriptions import Recurring, RecurringSummary
 
 J = dict[str, Any]
@@ -118,7 +120,9 @@ def row(r: LedgerRow, by_id: dict[str, Series], balance: int | None, *, today: d
             'status_override': str(r.status_override) if r.status_override else None,
             'amount_was': r.amount_was, 'paid': r.paid, 'card': r.card, 'balance': balance,
             'spending': r.kind is Kind.SPENDING or (s is not None and s.kind is Kind.SPENDING),
-            'late': r.state is RowState.OPEN and r.due_date < today, 'note': r.note}
+            'late': r.state is RowState.OPEN and r.due_date < today, 'note': r.note,
+            'labels': list(label_rules.shown(r, by_id)), 'own_labels': list(r.labels),
+            'no_schedule': s is not None and s.no_schedule}
 
 
 def ledger(budget: Budget, f: Forecast, *, today: date, start: date | None = None, end: date | None = None) -> J:
@@ -142,7 +146,8 @@ def ledger(budget: Budget, f: Forecast, *, today: date, start: date | None = Non
     return {'rows': rows, 'start': budget.start_balance, 'today': today.isoformat(), 'low': f.low,
             'cushion': budget.settings.alerts.cushion, 'chart': chart(f), 'cards': card_names(budget),
             'series': [{'id': s.id, 'name': s.name, 'kind': str(s.kind), 'status': str(s.status), 'notes': s.notes}
-                       for s in budget.series]}
+                       for s in budget.series],
+            'labels': list(label_rules.in_use(budget.series, budget.rows))}
 
 
 def series(s: Series) -> J:
@@ -153,7 +158,8 @@ def series(s: Series) -> J:
                          'weekend': str(c.weekend)},
             'funded_by': s.funded_by, 'status': str(s.status), 'card': s.card, 'debt': s.debt, 'group': s.group,
             'month_amounts': [[_months(m), a] for m, a in s.month_amounts], 'cycle_amounts': list(s.cycle_amounts),
-            'active': s.active, 'notes': s.notes, 'generated_through': iso(s.generated_through)}
+            'active': s.active, 'notes': s.notes, 'generated_through': iso(s.generated_through),
+            'labels': list(s.labels), 'no_schedule': s.no_schedule}
 
 
 def _months(m: object) -> str:
@@ -174,6 +180,24 @@ def account(a: Account, est: po.Estimate | None = None) -> J:
             'is_mortgage': a.is_mortgage, 'include_in_payoff': a.include_in_payoff, 'notes': a.notes,
             'utilization_bp': po.utilization(a), 'monthly_interest': po.monthly_interest(a),
             'history': [[iso(d), v] for d, v in a.history]}
+
+
+def _change(c: inv.Change | None) -> J | None:
+    return None if c is None else {'since': iso(c.since), 'was': c.was, 'amount': c.amount, 'pct_bp': c.pct_bp}
+
+
+def investments(s: inv.Summary, sources: dict[str, J], *, today: date) -> J:
+    """Money > Investments (D-102): each account's balance and its change over a month, a quarter, a year and since
+    its first balance, and the total by date. `source` is `bank` when a linked account keeps the balance."""
+    old = today - timedelta(days=inv.STALE_DAYS)
+    return {'accounts': [{'id': a.id, 'name': a.name, 'balance': a.balance, 'as_of': iso(a.as_of), 'notes': a.notes,
+                          'source': 'bank' if a.id in sources else 'typed', 'bank': sources.get(a.id),
+                          'stale': a.id not in sources and (a.as_of is None or a.as_of < old),
+                          'change': {k: _change(c) for k, c in ch},
+                          'history': [[iso(d), v] for d, v in a.history]}
+                         for a, ch in zip(s.accounts, s.by_account, strict=True)],
+            'total': s.total, 'as_of': iso(s.as_of), 'change': {k: _change(c) for k, c in s.changes},
+            'series': [[iso(d), v] for d, v in s.series], 'stale_after_days': inv.STALE_DAYS}
 
 
 def _result(r: PayoffResult) -> J:
@@ -298,6 +322,8 @@ def preview(budget: Budget, prepared: Prepared, result: ReconcileResult) -> J:
 
     def rj(rid: str) -> J:
         return row(rows[rid], by_id, None, today=budget.as_of)
+    # the open rows offered when the person says what a money-out line paid (reconcile.assignable)
+    pick = {tid: [rj(x) for x in ids] for tid, ids in assignable(budget, result).items()}
     return {
         'basis': txn(prepared.basis) if prepared.basis else None, 'basis_ambiguous': prepared.basis_ambiguous,
         'new_count': len(prepared.new), 'through': iso(prepared.through), 'latest_balance': prepared.latest_balance,
@@ -306,10 +332,12 @@ def preview(budget: Budget, prepared: Prepared, result: ReconcileResult) -> J:
                  for a in result.auto],
         'proposals': [{'id': p.id, 'kind': p.kind, 'note': p.note, 'txn': txn(txns[p.txn_id]) if p.txn_id else None,
                        'rows': [rj(x) for x in p.row_ids if x in rows], 'total': p.total, 'group': p.group,
-                       'can_reduce': p.can_reduce, 'expected_id': p.expected_id} for p in result.proposals],
+                       'can_reduce': p.can_reduce, 'expected_id': p.expected_id,
+                       'candidates': pick.get(p.txn_id, [])} for p in result.proposals],
         'tracked': [{'txn': txn(txns[t.txn_id]), 'rule': rules[t.rule_id].name if t.rule_id in rules else t.rule_id,
                      'kind': str(t.kind)} for t in result.tracked],
-        'unknown': [{'txn': txn(txns[u.txn_id]), 'reason': u.reason} for u in result.unknown],
+        'unknown': [{'txn': txn(txns[u.txn_id]), 'reason': u.reason, 'candidates': pick.get(u.txn_id, [])}
+                    for u in result.unknown],
     }
 
 

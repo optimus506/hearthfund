@@ -9,8 +9,8 @@ rows, shows the running balance and the lowest point ahead, and checks your bank
   and *Check-up*.
 - **Plan**: "can we afford it?" what-ifs and expected one-off items.
 - **Money**: *Uploads* (upload a bank export as CSV, OFX or QFX, review the matches, apply), *Report* (where the
-  money goes), *Card* (card spending by category), *Subscriptions* and a monthly *Recap*. *Check-up*, under
-  Bills, compares the bills with what the bank paid.
+  money goes), *Card* (card spending by category), *Subscriptions*, a monthly *Recap* and *Investments*
+  (balances over time). *Check-up*, under Bills, compares the bills with what the bank paid.
 
 | Home: the weekly check-in | Where the money goes |
 |---|---|
@@ -108,7 +108,12 @@ On **More > Import** (owners only):
      the payment). Leave a proposal alone to decide later. Alternatives for the same bank item exclude each other.
    - **Card payments:** a payment to a credit card is not new spending. It is proposed as a bundle of the card-paid
      rows (groceries, fuel, ...) it covers.
-   - **No budget row:** tracked items (counted in reports) and unmatched ones (consider a payee rule).
+     A payment made up to a week before its rows is proposed too, marked "dated after the payment".
+   - **No budget row:** tracked items (counted in reports) and unmatched ones (consider a payee rule). For an
+     unmatched payment, **This paid…** lists the open rows near it: tick the ones it paid and Apply clears them
+     with it. What the rows do not use up stays an unbudgeted payment. If they add up to more than the payment,
+     take one off or pick the larger row that keeps the rest. A proposal that is not right has the same choice
+     (**Choose the rows it paid…**).
 3. **Apply.** The checkbook balance becomes the bank's latest balance and the report is kept under Past
    reconciliations.
 

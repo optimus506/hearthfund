@@ -14,14 +14,18 @@ from typing import Literal
 from . import alerts as alerts_mod
 from . import forecast as fc
 from .ledger import clear_row, generate, horizon_end, order_key, ordered, reduce_row
-from .models import BankTxn, Budget, LedgerRow, PayeeRule, RowState, RuleKind, Status, row_status
+from .models import BankTxn, Budget, Kind, LedgerRow, PayeeRule, RowState, RuleKind, Status, row_status
 from .money import Cents, fmt
 from .rules import classify
 
 __all__ = [
-    'Applied', 'AutoMatch', 'ClearedLine', 'Prepared', 'Proposal', 'ReconcileError', 'ReconcileResult', 'Tracked',
-    'Unknown', 'apply', 'match', 'prepare', 'report', 'txn_label',
+    'CARD_AHEAD_DAYS', 'PICK_MAX', 'Applied', 'Assign', 'AutoMatch', 'ClearedLine', 'Prepared', 'Proposal',
+    'ReconcileError', 'ReconcileResult', 'Tracked', 'Unknown', 'apply', 'assignable', 'match', 'prepare', 'report',
+    'txn_label',
 ]
+
+CARD_AHEAD_DAYS = 7      # a card payment with no card-funded row before it: propose that card's rows this far ahead
+PICK_BEFORE, PICK_AFTER, PICK_MAX = 62, 31, 40   # the open rows offered when the person picks what a line paid
 
 ErrorCode = Literal['chain_break', 'no_basis', 'nothing_new', 'empty', 'bad_order']
 
@@ -73,6 +77,14 @@ class Unknown:
 
 
 @dataclass(frozen=True, slots=True)
+class Assign:
+    """The person's own answer to "what did this bank line pay?": `clear` rows are paid in full; `reduce` is one
+    larger row that takes what is left of the payment and stays open with the rest."""
+    clear: tuple[str, ...] = ()
+    reduce: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Tracked:
     txn_id: str
     rule_id: str
@@ -110,6 +122,7 @@ class Applied:
     result: ReconcileResult | None = None
     accepted: tuple[tuple[str, str], ...] = ()       # (proposal id, "clear" | "reduce")
     before: Budget | None = None                       # the budget the reconciliation started from
+    assigned: tuple[tuple[str, Cents], ...] = ()     # (bank line the person assigned rows to, how much they took)
 
 
 def txn_label(t: BankTxn) -> str:
@@ -260,8 +273,12 @@ def match(budget: Budget, prepared: Prepared) -> ReconcileResult:
     n = 0
     for t, rule in pending:
         if rule.kind is RuleKind.CARD:
-            pool = sorted((r for r in rows if r.id not in claimed and rule.card is not None and r.card == rule.card
-                           and r.amount > 0 and r.due_date <= t.posted), key=lambda r: (r.due_date, order_key(r)))
+            mine = sorted((r for r in rows if r.id not in claimed and rule.card is not None and r.card == rule.card
+                           and r.amount > 0), key=lambda r: (r.due_date, order_key(r)))
+            pool = [r for r in mine if r.due_date <= t.posted]
+            ahead = not pool
+            if ahead:      # paid a little before the rows it covers: look a few days ahead (a proposal, as always)
+                pool = [r for r in mine if r.due_date <= t.posted + timedelta(days=CARD_AHEAD_DAYS)]
             pick: list[LedgerRow] = []
             total, payment = 0, -t.amount
             for r in pool:
@@ -272,12 +289,14 @@ def match(budget: Budget, prepared: Prepared) -> ReconcileResult:
                 pick.append(r)
                 total += r.amount
             if not pick:
-                unknown.append(Unknown(t.id, 'card payment, but no open card-funded rows dated on or before it'))
+                unknown.append(Unknown(t.id, 'card payment, but no open card-funded rows dated up to %d days after '
+                                             'it' % CARD_AHEAD_DAYS))
                 continue
             n += 1
             proposals.append(Proposal('P%d' % n, t.id, tuple(r.id for r in pick), 'card_bundle',
-                                      'card payment covers these card-funded rows (%s of %s)'
-                                      % (fmt(total), fmt(payment)), total, t.id,
+                                      'card payment covers these card-funded rows (%s of %s)%s'
+                                      % (fmt(total), fmt(payment), '; dated after the payment' if ahead else ''),
+                                      total, t.id,
                                       len(pick) == 1 and pick[0].amount > payment))
             claimed.update(r.id for r in pick)
             continue
@@ -346,10 +365,81 @@ def match(budget: Budget, prepared: Prepared) -> ReconcileResult:
     return ReconcileResult(prepared, tuple(auto), tuple(proposals), tuple(tracked), tuple(unknown))
 
 
+# ---------------------------------------------------------------- the person's own choice
+
+def _pickable(budget: Budget, result: ReconcileResult) -> dict[str, BankTxn]:
+    """The money-out bank lines the person may assign rows to: unmatched ones, and ones a proposal is about (the
+    proposal is then left unaccepted)."""
+    ids = {u.txn_id for u in result.unknown} | {p.txn_id for p in result.proposals if p.txn_id}
+    return {t.id: t for t in result.prepared.new if t.id in ids and t.amount < 0}
+
+
+def assignable(budget: Budget, result: ReconcileResult) -> dict[str, tuple[str, ...]]:
+    """For each bank line the person may assign rows to, the open rows to offer: the rows its own proposals
+    named, then rows the line's card pays, then the rest, nearest dates first."""
+    taken = {a.row_id for a in result.auto}
+    rows = [r for r in budget.rows if r.state is RowState.OPEN and r.amount > 0 and r.kind is not Kind.INCOME
+            and r.id not in taken]
+    out: dict[str, tuple[str, ...]] = {}
+    for t in _pickable(budget, result).values():
+        rule = classify(t, budget.rules)
+        card = rule.card if rule is not None and rule.kind is RuleKind.CARD else None
+        own = {i for p in result.proposals if p.txn_id == t.id for i in p.row_ids}
+        near = [r for r in rows if r.id in own or -PICK_BEFORE <= (r.due_date - t.posted).days <= PICK_AFTER]
+        near.sort(key=lambda r: (r.id not in own, card is None or r.card != card,
+                                 abs((r.due_date - t.posted).days), r.due_date, order_key(r)))
+        out[t.id] = tuple(r.id for r in near[:PICK_MAX])
+    return out
+
+
+def _check_assign(budget: Budget, result: ReconcileResult, accept: Mapping[str, str],
+                  assign: Mapping[str, Assign]) -> dict[str, Cents]:
+    """Refuse a choice that cannot be applied; for each line, how much goes on its `reduce` row (0: none)."""
+    lines = _pickable(budget, result)
+    rows = {r.id: r for r in budget.rows}
+    by_pid = {p.id: p for p in result.proposals}
+    used: dict[str, str] = {a.row_id: 'matched automatically' for a in result.auto}
+    for pid in accept:
+        if by_pid[pid].txn_id in assign:
+            raise ValueError('%s is about a bank line you chose rows for: leave one of the two' % pid)
+        used.update({i: 'cleared by %s' % pid for i in by_pid[pid].row_ids})
+    part: dict[str, Cents] = {}
+    for tid, a in assign.items():
+        t = lines.get(tid)
+        if t is None:
+            raise ValueError('%s is not a money-out bank line waiting for a decision' % tid)
+        picked = (*a.clear, *((a.reduce,) if a.reduce else ()))
+        if not picked:
+            raise ValueError('%s: choose at least one row' % txn_label(t))
+        if len(set(picked)) < len(picked):
+            raise ValueError('%s: a row is chosen twice' % txn_label(t))
+        for rid in picked:
+            r = rows.get(rid)
+            if r is None or r.state is not RowState.OPEN or r.amount <= 0 or r.kind is Kind.INCOME:
+                raise ValueError('%s: %s is not an open bill or spending row' % (txn_label(t), rid))
+            if rid in used:
+                raise ValueError('%s is already %s' % (_row_label(r), used[rid]))
+            used[rid] = 'chosen for %s' % txn_label(t)
+        payment, total = -t.amount, sum(rows[i].amount for i in a.clear)
+        if total > payment:
+            raise ValueError('%s: the chosen rows total %s, more than the payment. Take one off, or leave the rest '
+                             'on a larger row' % (txn_label(t), fmt(total)))
+        if a.reduce:
+            rest = payment - total
+            if not 0 < rest < rows[a.reduce].amount:
+                raise ValueError('%s: %s can only keep the rest when the payment covers part of it'
+                                 % (txn_label(t), _row_label(rows[a.reduce])))
+            part[tid] = rest
+        else:
+            part[tid] = 0
+    return part
+
+
 # ---------------------------------------------------------------- apply
 
 def apply(budget: Budget, result: ReconcileResult, accept: Mapping[str, Literal['clear', 'reduce']], *,
-          today: date) -> Applied:
+          today: date, assign: Mapping[str, Assign] | None = None) -> Applied:
+    assign = assign or {}
     by_pid = {p.id: p for p in result.proposals}
     bad = [pid for pid in accept if pid not in by_pid]
     if bad:
@@ -362,6 +452,7 @@ def apply(budget: Budget, result: ReconcileResult, accept: Mapping[str, Literal[
             raise ValueError('%s: choose clear or reduce' % pid)
         if how == 'reduce' and not by_pid[pid].can_reduce:
             raise ValueError('%s cannot be a partial payment' % pid)
+    part = _check_assign(budget, result, accept, assign)
     txns = {t.id: t for t in result.prepared.txns}
     rows = {r.id: r for r in budget.rows}
     before = fc.compute(budget, today=today)
@@ -406,6 +497,21 @@ def apply(budget: Budget, result: ReconcileResult, accept: Mapping[str, Literal[
             else:
                 b = clear_row(b, rid, t.id, t.posted)
                 cleared.append(ClearedLine(rid, r.name, r.due_date, r.amount, t.id, 'accepted %s' % pid))
+    # the rows the person chose for a line (in the file's order): paid by it like any cleared row
+    order = {t.id: i for i, t in enumerate(result.prepared.new)}
+    assigned: list[tuple[str, Cents]] = []
+    for tid in sorted(assign, key=lambda x: order[x]):
+        t = txns[tid]
+        for rid in assign[tid].clear:
+            r = rows[rid]
+            b = clear_row(b, rid, t.id, t.posted)
+            cleared.append(ClearedLine(rid, r.name, r.due_date, r.amount, t.id, 'chosen'))
+        keep = assign[tid].reduce
+        if keep:
+            r = rows[keep]
+            b = reduce_row(b, keep, part[tid], t.id)
+            cleared.append(ClearedLine(keep, r.name, r.due_date, part[tid], t.id, 'chosen, part paid'))
+        assigned.append((tid, sum(rows[i].amount for i in assign[tid].clear) + part[tid]))
     prep = result.prepared
     b = replace(b, start_balance=prep.latest_balance, as_of=prep.through, last_reconciled_through=prep.through,
                 expected=tuple(replace(e, status='done') if e.id in done_expected else e for e in b.expected))
@@ -415,7 +521,7 @@ def apply(budget: Budget, result: ReconcileResult, accept: Mapping[str, Literal[
                   and r.due_date <= prep.through)
     after = fc.compute(b, today=today)
     applied = Applied(b, tuple(cleared), still, before, after, '', result,
-                      tuple((pid, accept[pid]) for pid in sorted(accept)), budget)
+                      tuple((pid, accept[pid]) for pid in sorted(accept)), budget, tuple(assigned))
     return replace(applied, report_md=report(applied, dry_run=False, today=today))
 
 
@@ -478,7 +584,8 @@ def report(applied: Applied, *, dry_run: bool, today: date) -> str:
         L.append('None.')
     L += ['', '## Needs your decision', '']
     taken = {pid for pid, _ in applied.accepted}
-    open_props = [p for p in res.proposals if p.id not in taken] if res else []
+    covered = dict(applied.assigned)
+    open_props = [p for p in res.proposals if p.id not in taken and p.txn_id not in covered] if res else []
     if open_props:
         L += ['Not applied yet. Proposals that share a bank transaction are alternatives: pick at most one.', '']
         L += _table(['ID', 'Bank transaction', 'Would clear', 'Why'],
@@ -488,7 +595,11 @@ def report(applied: Applied, *, dry_run: bool, today: date) -> str:
     else:
         L.append('None.')
     L += ['', '## Bank items with no budget row', '']
-    items = [(txn_label(txns[u.txn_id]), 'unmatched: ' + u.reason) for u in (res.unknown if res else ())]
+    items = [(txn_label(txns[u.txn_id]), 'unmatched: ' + u.reason) for u in (res.unknown if res else ())
+             if u.txn_id not in covered]
+    # a line the person chose rows for: only what the rows did not take is left without a budget row
+    items += [(txn_label(txns[i]), 'not budgeted: %s of it (the rest paid the rows you chose)'
+               % fmt(abs(txns[i].amount) - took)) for i, took in applied.assigned if abs(txns[i].amount) > took]
     items += [(txn_label(txns[x.txn_id]), 'not budgeted: %s' % (rules[x.rule_id].name if x.rule_id in rules
                                                                  else x.rule_id)) for x in (res.tracked if res else ())]
     L += _table(['Transaction', 'Status'], items) if items else ['None.']

@@ -94,6 +94,19 @@ def test_weekly_plan_reaches_back_before_the_series_was_set_up():
     assert dict(m.weeks[1].budget)['Grocery'] == 60000          # the week of 3/5 holds the 10th
 
 
+def test_plan_of_an_every_n_months_line_reaches_back_in_its_own_months():
+    from hbudget.core.cards import _back_to
+    from hbudget.core.recurrence import dates
+    q = schedule('monthly', D(2029, 6, 10), day=10, interval=3)          # June, September, ...
+    back = _back_to(q, D(2028, 11, 20))
+    assert dates(back, D(2028, 11, 1), D(2029, 9, 30)) == [D(2028, 12, 10), D(2029, 3, 10), D(2029, 6, 10),
+                                                           D(2029, 9, 10)]
+    assert _back_to(q, D(2029, 7, 1)) is q                               # already started: unchanged
+    late = schedule('monthly', D(2029, 6, 20), day=10, interval=3)       # first on July 10
+    assert dates(_back_to(late, D(2029, 1, 15)), D(2029, 1, 1), D(2029, 7, 31)) == [D(2029, 1, 10), D(2029, 4, 10),
+                                                                                  D(2029, 7, 10)]
+
+
 def test_store_name():
     assert store('CORNER MARKET #1234 SPRINGFIELD') == store('corner  market #5678') == 'CORNER MARKET'
     assert store('SHOP*AB12CD') == 'SHOP'

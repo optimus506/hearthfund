@@ -1,8 +1,9 @@
 """Series inference for imported rows (ARCHITECTURE 12.3).
 
 Rows are grouped by exact name and the due dates are tested against candidate schedules (weekly, biweekly,
-monthly, semimonthly, yearly; for income also with a weekend shift). A schedule fits when every row date is one of
-its occurrences and the rows cover at least three quarters of the occurrences between the first and last row.
+monthly, every few months, semimonthly, yearly; for income also with a weekend shift). A schedule fits when every
+row date is one of its occurrences and the rows cover at least three quarters of the occurrences between the first
+and last row.
 Inference only labels rows: it never changes a row's amount, date or order.
 """
 from __future__ import annotations
@@ -19,6 +20,7 @@ from hbudget.core.recurrence import Occurrence, occurrences
 __all__ = ['MIN_COVERAGE', 'infer_series']
 
 MIN_COVERAGE = 0.75
+EVERY_MONTHS = (2, 3, 4, 6)   # tried after plain monthly; three rows or more, so two stray rows are not a series
 _SLACK = timedelta(days=3)   # a weekend shift moves a date by at most two days
 
 
@@ -55,6 +57,9 @@ def _candidates(dates: Sequence[date], shifts: Sequence[Weekend]) -> Iterable[Sc
         candidates.add(max(days_seen))
         for day in sorted(candidates, key=lambda x: (-days_seen.get(x, 0), x)):
             yield Schedule(Cadence.MONTHLY, _start(first), day=day, weekend=weekend)
+        if len(dates) >= 3:                      # every 2, 3 (quarterly), 4 or 6 months, counted from the first row
+            for every in EVERY_MONTHS:
+                yield Schedule(Cadence.MONTHLY, _start(first), day=first.day, interval=every, weekend=weekend)
         common = [d for d, _ in days_seen.most_common(6)]
         pool = sorted(set(common) | (candidates if weekend is not Weekend.NONE else set()))[:10]
         for a, b in combinations(pool, 2):
