@@ -23,7 +23,8 @@ SECTIONS: list[tuple[str, str, list[tuple[str, str, str]]]] = [
                         ('checkup', 'Check-up', '')]),
     ('plan', 'Plan', [('plan', 'What if', ''), ('goals', 'Goals', ''), ('calendar', 'Calendar', '')]),
     ('money', 'Money', [('reconcile', 'Uploads', ''), ('report', 'Report', ''), ('card', 'Card', ''),
-                        ('subscriptions', 'Subscriptions', ''), ('recap', 'Recap', '')]),
+                        ('subscriptions', 'Subscriptions', ''), ('recap', 'Recap', ''),
+                        ('investments', 'Investments', '')]),
     ('more', 'More', [('more', 'More', ''),
                       ('rules', 'Rules', 'Payee rules: how bank lines are matched to the budget'),
                       ('settings', 'Settings', 'Checkbook balance, alerts, matching, forecast length and colours'),
@@ -40,7 +41,8 @@ BANK = ('connections', 'Bank connection', 'Bring in bank and card transactions t
 TITLES = dict(TABS) | {'bills': 'Bills by payday', 'checkup': 'Bill check-up', 'series': 'Bill setup',
                        'debts': 'Debts and payoff', 'plan': 'What if',
                        'reconcile': 'Bank and card uploads', 'subscriptions': 'Subscriptions and recurring charges',
-                       'calendar': 'Cash-flow calendar', 'recap': 'Monthly recap'}
+                       'calendar': 'Cash-flow calendar', 'recap': 'Monthly recap',
+                       'investments': 'Investments over time'}
 MIN_ROLE = {'import': 'owner', 'members': 'owner', 'access': 'owner'}
 # pages that show the summary strip under the navigation (Home draws its own)
 STRIP = {'bills', 'checkup', 'series', 'plan', 'goals', 'debts', 'reconcile', 'report', 'card', 'subscriptions',

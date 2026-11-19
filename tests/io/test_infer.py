@@ -60,6 +60,20 @@ def test_yearly_and_once() -> None:
     assert s.schedule.cadence is Cadence.ONCE and out[0].nominal_date == date(2029, 6, 1)
 
 
+def test_every_few_months() -> None:
+    s, out = _one(_rows('Trash', [date(2028, 12, 1), date(2029, 3, 1), date(2029, 6, 1), date(2029, 9, 1)]))
+    assert (s.schedule.cadence, s.schedule.interval, s.schedule.start) == (Cadence.MONTHLY, 3, date(2028, 12, 1))
+    assert [r.series_id for r in out] == ['trash'] * 4
+    s, _ = _one(_rows('Car insurance', [date(2029, 1, 15), date(2029, 7, 15), date(2030, 1, 15)]))
+    assert (s.schedule.cadence, s.schedule.interval) == (Cadence.MONTHLY, 6)
+    s, _ = _one(_rows('Water', [date(2029, 1, 31), date(2029, 3, 31), date(2029, 5, 31), date(2029, 7, 31)]))
+    assert (s.schedule.cadence, s.schedule.interval) == (Cadence.MONTHLY, 2)
+    # a monthly bill with a missing month stays monthly; two rows three months apart are not a series
+    s, _ = _one(_rows('Phone', [date(2029, m, 5) for m in (1, 2, 3, 5, 6, 7, 8)]))
+    assert (s.schedule.cadence, s.schedule.interval) == (Cadence.MONTHLY, 1)
+    assert infer_series(_rows('Vet', [date(2029, 1, 5), date(2029, 4, 5)]))[0] == []
+
+
 def test_irregular_and_mixed_kinds_stay_standalone() -> None:
     rows = _rows('Odd', [date(2029, 1, 1), date(2029, 1, 4), date(2029, 2, 20)])
     rows += _rows('Mixed', [date(2029, 1, 1)], start=10)

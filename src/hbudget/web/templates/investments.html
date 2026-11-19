@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card" aria-labelledby="h-inv">
+  <div class="section-head">
+    <h2 id="h-inv">Investments</h2>
+    <div class="row-actions">
+      <select id="invShow" aria-label="What the chart shows"><option value="">All accounts</option></select>
+      <select id="invRange" aria-label="How far back"><option value="91">3 months</option><option value="365" selected>1 year</option><option value="1826">5 years</option><option value="0">Everything</option></select>
+    </div>
+  </div>
+  <p class="muted small">What the investment and retirement accounts hold, and how that has moved. A summary only: it is not part of the forecast, the debts or the goals, and a change is the difference between two balances, so it includes money paid in or taken out as well as what the market did.</p>
+  <div class="kpis" id="invKpis"></div>
+  <div class="chart" id="invChart"></div>
+  <div id="invNote"></div>
+</section>
+<section class="card" aria-labelledby="h-inva">
+  <h2 id="h-inva">Accounts</h2>
+  <div id="invTable"><div class="empty">Loading…</div></div>
+  <form class="form" id="invForm">
+    <input type="hidden" id="iId">
+    <div class="field"><label for="iName">Name</label><input id="iName" type="text" maxlength="60" placeholder="e.g. Retirement plan at work"></div>
+    <div class="field" data-new><label for="iBal">Balance</label><input id="iBal" type="text" inputmode="decimal"></div>
+    <div class="field" data-new><label for="iAsOf">As of</label><input id="iAsOf" type="date"></div>
+    <div class="field wide"><label for="iNotes">Note (optional)</label><input id="iNotes" type="text" maxlength="200"></div>
+    <div class="field"><button class="btn primary" id="iSave" type="submit">Add account</button></div>
+    <div class="field"><button class="btn" id="iCancel" type="button" hidden>Cancel</button></div>
+  </form>
+  <p class="muted small">Type the balance from a statement whenever you like; an older date fills in the history. Do not enter account numbers. With the optional bank connection, a linked account can keep its balance up to date by itself (More &gt; Bank connection).</p>
+</section>
+<section class="card" aria-labelledby="h-invf" id="invFileCard">
+  <h2 id="h-invf">Bring in a file</h2>
+  <p class="muted small">A statement or a positions file from the broker or the plan (.ofx, .qfx, .csv), or your own table with a date column and a balance column (.csv, .ods, .xlsx). Only dates and totals are read: what the account holds is not kept, and neither is the file. You see what was read before anything is saved.</p>
+  <form class="form" id="invFile">
+    <div class="field wide"><label for="ifFile">File</label><input id="ifFile" type="file" accept=".csv,.ods,.xlsx,.ofx,.qfx"></div>
+    <div class="field"><button class="btn primary" type="submit">Read the file</button></div>
+  </form>
+  <div id="invFound"></div>
+</section>
+{% endblock %}
+{% block scripts %}<script type="module" src="{{ static }}/js/investments.js"></script>{% endblock %}

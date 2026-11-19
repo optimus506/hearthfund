@@ -94,9 +94,24 @@ class Tool:
                                 'idempotentHint': self.idempotent, 'openWorldHint': False}}
 
 
+LABELS = {'type': 'array', 'maxItems': 5, 'items': {'type': 'string', 'maxLength': 24}}
+
 TOOLS = [
     Tool('get_summary', 'Budget summary', 'Checkbook balance, the forecast low and its date, the year-end balance, '
          'bills due soon with no status, and the current alerts.', 'viewer', {}, (), lambda c: v1.op_summary(c)),
+    Tool('get_bank_connection', 'Bank connection', 'The optional Plaid bank connection: the linked banks, when '
+         'each last synced and any problem, how many postings wait to be brought in, and `balance`: the bank\'s '
+         'balance next to the checkbook\'s, the difference (`ahead`), the `reason` (agree, postings, pending or '
+         'unexplained) and a `message` that says it in plain words. Use it to answer "why does the app show a '
+         'different balance than my bank?". `available` is false on a server that uses bank files only.',
+         'viewer', {}, (), lambda c: v1.op_bank_connection(c)),
+    Tool('sync_bank', 'Sync with the bank', 'Sync with the banks linked through Plaid, as the check-in\'s button '
+         'does: new postings become one waiting bank upload (`bank_upload.id`; go on with reconcile_preview and '
+         'reconcile_apply) and card purchases go to the Card page. `balance` is as in get_bank_connection. '
+         '`refresh: true` first asks Plaid to fetch from the bank at once: use it only when get_bank_connection '
+         'says `can_refresh` and the balance is `unexplained`, because each refresh is paid for; it is limited '
+         'to one an hour per bank. Needs a write token.', 'editor', {'refresh': {'type': 'boolean'}}, (),
+         lambda c, refresh=False: v1.op_sync_bank(c, refresh), idempotent=False),
     Tool('get_paydays', 'Until payday', 'Money left before the next payday, the bills due before it, and the pay '
          'periods after it (money in, money out, balance before the next pay).', 'viewer', {}, (),
          lambda c: v1.op_paydays(c)),
@@ -124,6 +139,12 @@ TOOLS = [
          'interest less the reconciled payments of the recurring items linked to the debt since `as_of`: a '
          'current figure between hand updates, labelled as an estimate.', 'viewer', {}, (),
          lambda c: v1.op_debts(c)),
+    Tool('get_investments', 'Investments', 'Investment and retirement accounts: each balance with its date, where it '
+         'comes from (`bank`: a linked account keeps it; `typed`: entered by hand, `stale` when older than '
+         '`stale_after_days`), its `change` over a month, a quarter, a year and since the first balance, the total '
+         'and the total by date (`series`). A summary only: a change is the difference between two balances, so it '
+         'includes money paid in or taken out as well as market moves. Not part of the forecast or the debts.',
+         'viewer', {}, (), lambda c: v1.op_investments(c)),
     Tool('get_payoff_plan', 'Debt payoff plan', 'When the debts are paid off with the avalanche (highest APR first) or '
          'snowball (smallest balance first) method and an optional extra amount each month. `promos` says whether '
          'each promo balance is paid before the promo ends and the monthly amount that would clear it; '
@@ -223,6 +244,12 @@ TOOLS = [
          'on the Bills page. Needs a write token.', 'contributor',
          {'bill_id': {'type': 'string', 'maxLength': 200}, 'note': {'type': 'string', 'maxLength': 300}},
          ('bill_id', 'note'), lambda c, bill_id, note: v1.op_row_note(c, bill_id, note)),
+    Tool('set_bill_labels', 'Labels on a bill', 'Set the short labels of one bill or row (an id from '
+         'list_upcoming_bills), e.g. ["blue card"] or ["paid early"]: at most 5, 24 characters each; an empty '
+         'list clears them. They show as chips beside the name, after the labels of the row\'s recurring item (set '
+         'those with set_series_details). Needs a write token.', 'contributor',
+         {'bill_id': {'type': 'string', 'maxLength': 200}, 'labels': LABELS},
+         ('bill_id', 'labels'), lambda c, bill_id, labels: v1.op_row_labels(c, bill_id, labels)),
     Tool('set_bill_status', 'Set a bill\'s status', 'Mark one bill (an id from list_upcoming_bills) as autopay, manual '
          '(scheduled to be paid) or none. Needs a write token.', 'contributor',
          {'bill_id': {'type': 'string', 'maxLength': 200},
@@ -285,19 +312,29 @@ TOOLS = [
     Tool('reconcile_preview', 'Reconcile dry run', 'Match a waiting bank upload against the budget without saving: '
          '`auto` (matched by the rules), `proposals` (P1, P2, ... each a bank line and the rows it may pay; accept '
          'with clear, or reduce when the line paid only part), `tracked` and `unknown` lines, the new balance and a '
-         '`fingerprint` for reconcile_apply. Show the proposals to the person before applying. Needs a write '
-         'token.', 'editor', {'upload_id': ID}, ('upload_id',),
+         '`fingerprint` for reconcile_apply. A money-out line under `unknown` or `proposals` also has '
+         '`candidates`: the open rows the person may say it paid (reconcile_apply `assign`). Show the proposals to '
+         'the person before applying. Needs a write token.', 'editor', {'upload_id': ID}, ('upload_id',),
          lambda c, upload_id: v1.op_reconcile_preview(c, upload_id), read_only=True),
     Tool('reconcile_apply', 'Apply a reconcile', 'Apply a reconcile_preview: clears the auto matches and the '
          'accepted proposals and sets the checkbook balance, all or nothing. Refused when the budget or the '
-         'proposals changed since the preview (preview again). Proposals left out of `accept` stay open. Needs a '
-         'write token.', 'editor',
+         'proposals changed since the preview (preview again). Proposals left out of `accept` stay open. '
+         '`assign` is for a money-out line the rules did not match (or whose proposal is wrong): the rows the '
+         'person says it paid. The rows may total less than the payment (the rest stays unbudgeted) but not '
+         'more, unless `reduce` names one larger row that takes the rest of the payment and stays open with '
+         'what is left. Ask the person; never guess. Needs a write token.', 'editor',
          {'upload_id': ID, 'fingerprint': {'type': 'string', 'maxLength': 64},
           'accept': {'type': 'object', 'additionalProperties': {'type': 'string', 'enum': ['clear', 'reduce']},
-                     'description': 'Proposal id to clear or reduce, e.g. {"P1": "clear"}'}},
+                     'description': 'Proposal id to clear or reduce, e.g. {"P1": "clear"}'},
+          'assign': {'type': 'object', 'additionalProperties': {
+              'type': 'object', 'additionalProperties': False, 'properties': {
+                  'clear': {'type': 'array', 'maxItems': 40, 'items': {'type': 'string', 'maxLength': 120}},
+                  'reduce': {'type': 'string', 'maxLength': 120}}},
+              'description': 'Bank line id (txn.id) to the row ids it paid, e.g. {"<txn id>": {"clear": '
+                             '["<row id>"], "reduce": "<row id>"}}; do not also accept a proposal of that line'}},
          ('upload_id', 'fingerprint'),
-         lambda c, upload_id, fingerprint, accept=None: v1.op_reconcile_apply(c, upload_id, fingerprint,
-                                                                               accept or {}), destructive=True),
+         lambda c, upload_id, fingerprint, accept=None, assign=None: v1.op_reconcile_apply(
+             c, upload_id, fingerprint, accept or {}, assign), destructive=True),
     Tool('delete_upload', 'Hide or delete an upload', 'Hide an uploaded export: it leaves the list and its postings '
          'stay in the history behind Report, Check-up, Recap and Subscriptions. Only for a wrong file (another '
          'account, say), `with_postings: true` deletes a waiting, unreconciled export together with the postings no '
@@ -311,16 +348,43 @@ TOOLS = [
          lambda c, upload_id: v1.op_upload_removal(c, upload_id), read_only=True),
     # recurring items, like the "Income, bills and spending lines" page
     Tool('list_series', 'Recurring items', 'Recurring income, bills and spending lines (id, amount, cadence, '
+         '`interval` when it is every N weeks or months, start, '
          'status, the card that pays it, group) and the credit cards that can pay one.', 'viewer', {}, (),
          lambda c: v1.op_series(c)),
+    Tool('add_series', 'Add a recurring item', 'Add a recurring income, bill or spending line, as the Bill setup '
+         'form does; its rows are generated to the end of the forecast (for a one-off use add_row). `cadence` with '
+         '`start`, the first due date: weekly and monthly take `interval` (monthly with interval 3 is every 3 '
+         'months, counted from `start`: a start in December gives December, March, June, September); semimonthly '
+         'needs `days`, the two days of the month. `day` is the day of the month when it is not the start\'s. '
+         '`card` is a credit card id from list_series when the card pays it, `debt` an id from get_debts when its '
+         'payments pay that debt down, `funded_by` the id of the pay that funds it. Returns the id and the first '
+         'dates, to check. Needs a write token.', 'editor',
+         {'name': {'type': 'string', 'minLength': 1, 'maxLength': 60},
+          'kind': {'type': 'string', 'enum': ['income', 'bill', 'spending']}, 'amount': CENTS,
+          'cadence': {'type': 'string', 'enum': ['weekly', 'biweekly', 'semimonthly', 'monthly', 'yearly']},
+          'start': DATE, 'end': DATE, 'interval': {'type': 'integer', 'minimum': 1, 'maximum': 52},
+          'day': {'type': 'integer', 'minimum': 1, 'maximum': 31},
+          'days': {'type': 'array', 'items': {'type': 'integer', 'minimum': 1, 'maximum': 31}, 'minItems': 2,
+                   'maxItems': 2},
+          'month': {'type': 'integer', 'minimum': 1, 'maximum': 12},
+          'weekend': {'type': 'string', 'enum': ['none', 'before', 'after']},
+          'status': {'type': 'string', 'enum': ['autopay', 'manual', 'none']},
+          'card': {'type': 'string', 'maxLength': 40}, 'debt': {'type': 'string', 'maxLength': 40},
+          'funded_by': {'type': 'string', 'maxLength': 120}, 'group': {'type': 'string', 'maxLength': 40},
+          'notes': {'type': 'string', 'maxLength': 1000}},
+         ('name', 'kind', 'amount', 'cadence', 'start'),
+         lambda c, **f: v1.op_add_series(c, v1.series_body(f)), idempotent=False),
     Tool('set_series_details', 'Change a recurring item', 'Change a recurring item\'s card (a credit card id from '
-         'list_series, or null), the debt it pays down (`debt`, an id from get_debts, or null), status, group or '
-         'notes. Its rows keep their amounts; open rows from today on take the new card. Needs a write token.',
+         'list_series, or null), the debt it pays down (`debt`, an id from get_debts, or null), status, group, '
+         'notes, `labels` (short chips every row of it shows, e.g. ["blue card"]) or `no_schedule` (true: nothing '
+         'is scheduled for it, so its rows stay out of the "not scheduled" alert). Its rows keep their amounts; '
+         'open rows from today on take the new card. Needs a write token.',
          'editor',
          {'series_id': ID, 'card': {'type': ['string', 'null'], 'maxLength': 40},
           'debt': {'type': ['string', 'null'], 'maxLength': 40},
           'status': {'type': 'string', 'enum': ['autopay', 'manual', 'none']},
-          'group': {'type': ['string', 'null'], 'maxLength': 40}, 'notes': {'type': 'string', 'maxLength': 1000}},
+          'group': {'type': ['string', 'null'], 'maxLength': 40}, 'notes': {'type': 'string', 'maxLength': 1000},
+          'labels': LABELS, 'no_schedule': {'type': 'boolean'}},
          ('series_id',), lambda c, series_id, **f: v1.op_series_details(c, series_id, f)),
     # payee rules, like the Rules page
     Tool('list_rules', 'Payee rules', 'The rules that sort bank lines when reconciling, in the order they are tried '
@@ -375,6 +439,12 @@ TOOLS = [
           'deferred_interest': {'type': 'boolean'}, 'include_in_payoff': {'type': 'boolean'},
           'notes': {'type': 'string', 'maxLength': 1000}, 'expected_balance': {'type': 'integer'}}, ('debt_id',),
          lambda c, debt_id, expected_balance=None, **f: v1.op_update_debt(c, debt_id, f, expected_balance)),
+    Tool('set_investment_balance', 'Note an investment balance', 'Note the balance of an investment account (an id '
+         'from get_investments) for a date, today when `as_of` is left out. An older date fills the history without '
+         'changing the current balance; the same date again replaces that day\'s balance. Needs a write token.',
+         'editor', {'investment_id': ID, 'balance': {'type': 'integer', 'minimum': 0}, 'as_of': DATE},
+         ('investment_id', 'balance'),
+         lambda c, investment_id, balance, as_of=None: v1.op_investment_balance(c, investment_id, balance, as_of)),
     # keeping in sync
     Tool('list_changes', 'What changed', 'Changes to the budget after the entry `since` (0: from the start), oldest '
          'first: when, who (a member, or "token: <name>"), the action and the item id. Keep `cursor` and send it '
@@ -386,8 +456,9 @@ TOOLS = [
          'balance).', 'viewer', {}, (), lambda c: v1.op_reconciliations(c)),
     Tool('get_reconciliation', 'One reconciliation', 'What a reconciliation did (an id from list_reconciliations): '
          'who applied it and when, the balance before and after, and every new bank line with its outcome: '
-         'auto-matched to a row, a proposal and the decision (clear, reduce or skipped), tracked by a rule, or '
-         'unknown with the reason. Ones applied before 0.14 have `details` null; `report_md` has the summary.',
+         'auto-matched to a row, a proposal and the decision (clear, reduce, chose rows or skipped), tracked by a '
+         'rule, or unknown with the reason; `assigned` lists the lines the person chose rows for. Ones applied '
+         'before 0.14 have `details` null; `report_md` has the summary.',
          'viewer', {'rec_id': ID}, ('rec_id',), lambda c, rec_id: v1.op_reconciliation(c, rec_id)),
     Tool('undo_reconciliation', 'Undo a reconciliation', 'Undo the newest reconciliation: the rows it cleared or '
          'reduced are open again with their amounts, the checkbook balance and dates go back, and its upload waits '

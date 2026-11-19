@@ -46,6 +46,34 @@ class PlaidError(Exception):
     def login_required(self) -> bool:
         return self.code in ('ITEM_LOGIN_REQUIRED', 'PENDING_EXPIRATION', 'PENDING_DISCONNECT')
 
+    @property
+    def refresh_note(self) -> str | None:
+        """Plain words when an on-demand refresh is refused for a reason the household cannot fix by retrying."""
+        if self.code in ('PRODUCT_NOT_ENABLED', 'PRODUCTS_NOT_ENABLED', 'INVALID_PRODUCT', 'PRODUCT_NOT_READY',
+                         'UNAUTHORIZED_ROUTE_ACCESS', 'PRODUCT_UNAVAILABLE'):
+            return ('Plaid\'s on-demand refresh is not part of this Plaid account. It is an add-on: request it in '
+                    'the Plaid dashboard, or turn HBUDGET_PLAID_REFRESH off.')
+        if self.code in ('PRODUCTS_NOT_SUPPORTED', 'NO_ACCOUNTS', 'INSTITUTION_NOT_SUPPORTED'):
+            return 'This bank does not support an on-demand refresh. A normal sync still works.'
+        if self.code in ('TRANSACTIONS_REFRESH_LIMIT', 'RATE_LIMIT_EXCEEDED', 'RATE_LIMIT'):
+            return 'Plaid was asked to refresh this bank too often. Try again later.'
+        return None
+
+    @property
+    def liabilities_note(self) -> str:
+        """Plain words for why a bank's rates, minimums and due dates could not be read (Plaid Liabilities)."""
+        if self.code in ('PRODUCTS_NOT_SUPPORTED', 'NO_LIABILITY_ACCOUNTS', 'INSTITUTION_NOT_SUPPORTED'):
+            return 'This bank does not give rates, minimum payments or due dates through Plaid.'
+        if self.code in ('ADDITIONAL_CONSENT_REQUIRED', 'ACCESS_NOT_GRANTED', 'INVALID_ACCESS_TOKEN'):
+            return 'The bank has not been asked for this yet, or it was not allowed. Turn it on again to allow it.'
+        if self.code in ('PRODUCT_NOT_ENABLED', 'PRODUCTS_NOT_ENABLED', 'INVALID_PRODUCT', 'UNAUTHORIZED_ROUTE_ACCESS',
+                         'PRODUCT_UNAVAILABLE'):
+            return ('Liabilities is not part of this Plaid account. Request it in the Plaid dashboard, or turn '
+                    'HBUDGET_PLAID_LIABILITIES off.')
+        if self.code == 'PRODUCT_NOT_READY':
+            return 'Plaid is still fetching this from the bank. It comes with a later sync.'
+        return self.message
+
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args: Any, **kwargs: Any) -> None:   # a redirect off the Plaid host is refused
@@ -76,6 +104,16 @@ class PlaidAccount:
     type: str                        # depository, credit, loan, investment, other
     subtype: str
     current: Cents | None            # Plaid's current balance (for credit: what is owed)
+
+
+@dataclass(frozen=True, slots=True)
+class Liability:
+    """What Plaid Liabilities says about one card or loan. Everything may be missing: banks send what they have."""
+    account_id: str
+    apr_bp: int | None = None            # a card's purchase rate, a loan's interest rate
+    minimum: Cents | None = None         # the minimum (a mortgage: the next monthly) payment
+    next_due: date | None = None
+    statement_balance: Cents | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +166,46 @@ def parse_account(raw: Mapping[str, Any]) -> PlaidAccount:
                         subtype=str(raw.get('subtype') or ''), current=None if cur is None else cents(cur))
 
 
+def _bp(v: Any) -> int | None:
+    try:
+        bp = round(Decimal(str(v)) * 100)
+    except (ArithmeticError, ValueError, TypeError):
+        return None
+    return bp if 0 <= bp <= 9999 else None
+
+
+def _opt_cents(v: Any) -> Cents | None:
+    try:
+        return None if v is None else max(cents(v), 0)
+    except (ArithmeticError, ValueError, TypeError):
+        return None
+
+
+def parse_liabilities(raw: Mapping[str, Any]) -> list[Liability]:
+    """The `liabilities` object of /liabilities/get: cards, mortgages and student loans. Account numbers, addresses
+    and the rest of what Plaid sends are not read."""
+    out: list[Liability] = []
+    for c in raw.get('credit') or []:
+        if not c.get('account_id'):
+            continue
+        aprs = [a for a in c.get('aprs') or [] if isinstance(a, Mapping)]
+        buy = next((a for a in aprs if a.get('apr_type') == 'purchase_apr'), None)
+        out.append(Liability(str(c['account_id']), _bp(buy.get('apr_percentage')) if buy else None,
+                             _opt_cents(c.get('minimum_payment_amount')), _date(c.get('next_payment_due_date')),
+                             _opt_cents(c.get('last_statement_balance'))))
+    for m in raw.get('mortgage') or []:
+        if m.get('account_id'):
+            rate = m.get('interest_rate') if isinstance(m.get('interest_rate'), Mapping) else {}
+            out.append(Liability(str(m['account_id']), _bp(rate.get('percentage')),
+                                 _opt_cents(m.get('next_monthly_payment')), _date(m.get('next_payment_due_date'))))
+    for s in raw.get('student') or []:
+        if s.get('account_id'):
+            out.append(Liability(str(s['account_id']), _bp(s.get('interest_rate_percentage')),
+                                 _opt_cents(s.get('minimum_payment_amount')), _date(s.get('next_payment_due_date')),
+                                 _opt_cents(s.get('last_statement_balance'))))
+    return out
+
+
 def default_roles(accounts: Sequence[PlaidAccount], have_bank: bool = False) -> dict[str, Role]:
     """The first checking account is reconciled (unless one already is), credit cards go to the Card page, the rest
     is ignored. The household changes these on the Bank connection page."""
@@ -172,6 +250,46 @@ def bank_file(txns: Sequence[tuple[str, date, Cents, str]], current: Cents | Non
                     latest_balance=current if keep else None, has_balance=keep), keep
 
 
+@dataclass(frozen=True, slots=True)
+class Gap:
+    """The bank's balance next to the checkbook's, and what explains a difference."""
+    ahead: Cents                     # bank balance minus checkbook balance
+    reason: str                      # agree | postings | pending | unexplained
+    postings: int = 0                # the newest N stored postings are part of the explanation
+    pending: int = 0                 # pending transactions known for the account
+    pending_total: Cents = 0
+
+
+def balance_gap(current: Cents, checkbook: Cents, amounts: Sequence[Cents], pending: Sequence[Cents] = ()) -> Gap:
+    """Why Plaid's balance differs from the checkbook's. `amounts` are the stored postings of the window, newest
+    first (as bank_file orders them); `pending` the amounts of pending transactions.
+
+    - agree: the balances are equal.
+    - postings: the newest N postings lead from the checkbook balance to the bank's, so reviewing them closes it.
+    - pending: the bank's balance already counts the pending transactions; without them (and after the newest N
+      postings, if any) it meets the checkbook.
+    - unexplained: neither; Plaid has most likely not sent a posting yet.
+    """
+    ahead, total = current - checkbook, sum(pending)
+    if ahead == 0:
+        return Gap(0, 'agree', pending=len(pending), pending_total=total)
+
+    def reach(start: Cents) -> int | None:
+        run = start
+        for n, amount in enumerate(amounts):
+            if run == checkbook:
+                return n
+            run -= amount
+        return len(amounts) if run == checkbook else None
+    n = reach(current)
+    if n is not None:
+        return Gap(ahead, 'postings', n, len(pending), total)
+    n = reach(current - total) if total else None
+    if n is not None:
+        return Gap(ahead, 'pending', n, len(pending), total)
+    return Gap(ahead, 'unexplained', 0, len(pending), total)
+
+
 # ---------------------------------------------------------------- client
 
 class PlaidClient:
@@ -196,12 +314,16 @@ class PlaidClient:
         return data
 
     def link_token(self, *, user_ref: str, client_name: str, days: int, redirect_uri: str | None,
-                   access_token: str | None = None) -> str:
-        """A token for Plaid Link: a new connection, or (with access_token) signing in again to an existing one."""
+                   access_token: str | None = None, consent: Sequence[str] = ()) -> str:
+        """A token for Plaid Link: a new connection, or (with access_token) signing in again to an existing one.
+        `consent` names further products to ask the bank's customer to allow on that existing connection (Link's
+        update mode, `additional_consented_products`); nothing is asked for on a new connection."""
         body: dict[str, Any] = {'client_name': client_name[:30] or 'Hearthfund', 'language': 'en',
                                 'country_codes': ['US'], 'user': {'client_user_id': user_ref}}
         if access_token:
             body['access_token'] = access_token
+            if consent:
+                body['additional_consented_products'] = list(consent)
         else:
             body['products'] = ['transactions']
             body['transactions'] = {'days_requested': days if days in DAYS_CHOICES else 90}
@@ -244,6 +366,18 @@ class PlaidClient:
                 if e.code != 'TRANSACTIONS_SYNC_MUTATION_DURING_PAGINATION':
                     raise
         raise PlaidError('busy', 'Plaid was updating while the app read it. Try again in a minute.')
+
+    def liabilities(self, access_token: str) -> list[Liability]:
+        """Rates, minimum payments and due dates of the bank's cards and loans (/liabilities/get, a paid product
+        billed per linked bank and month once it is used)."""
+        d = self._post('/liabilities/get', {'access_token': access_token})
+        raw = d.get('liabilities')
+        return parse_liabilities(raw) if isinstance(raw, Mapping) else []
+
+    def refresh(self, access_token: str) -> None:
+        """Ask Plaid to fetch from the bank now (/transactions/refresh, a paid add-on). It answers when the fetch is
+        done, usually within ten seconds; the new postings then come with the next sync."""
+        self._post('/transactions/refresh', {'access_token': access_token})
 
     def remove(self, access_token: str) -> None:
         self._post('/item/remove', {'access_token': access_token})

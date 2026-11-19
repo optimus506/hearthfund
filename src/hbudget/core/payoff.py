@@ -15,7 +15,7 @@ __all__ = ['DebtOutcome', 'PayoffPlan', 'PayoffResult', 'PromoVerdict', 'monthly
            'utilization']
 
 Method = Literal['avalanche', 'snowball']
-NOT_DEBTS = (AccountKind.CHECKING, AccountKind.SAVINGS)
+NOT_DEBTS = (AccountKind.CHECKING, AccountKind.SAVINGS, AccountKind.INVESTMENT)
 
 
 def _div_half_up(n: int, d: int) -> int:

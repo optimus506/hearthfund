@@ -1,5 +1,7 @@
 // Balance-over-time line chart (hand-written SVG). series: [{points: [[iso, cents, row name, rows that day], ...],
 // name, colour, dash}]. One series gets an area fill; hovering shows a dot per series and the row behind the step.
+// opts: h, label, cushion, lows (false: no low marker), zero (false: no $0 line, and the axis need not start at
+// $0), straight (true: lines between the points, not steps), left (room for the axis labels).
 import { el, svg, money, money0, longD, parseD } from './api.js';
 
 function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
@@ -8,13 +10,14 @@ export function lineChart(host, series, opts = {}) {
   host.replaceChildren();
   const pts0 = (series[0] && series[0].points) || [];
   if (!pts0.length) { host.append(el('div', { class: 'empty', text: 'No rows to chart yet.' })); return; }
-  const W = Math.max(300, host.clientWidth || 640), H = opts.h || 220, L = 56, R = 12, T = 14, B = 26;
+  const W = Math.max(300, host.clientWidth || 640), H = opts.h || 220, L = opts.left || 56, R = 12, T = 14, B = 26;
   const all = series.map((s) => s.points.map(([d, b, row, n]) => ({ t: parseD(d).getTime(), b, d, row, n })));
   const x0 = Math.min(...all.map((p) => p[0].t)), x1 = Math.max(...all.map((p) => p[p.length - 1].t));
-  const vals = all.flat().map((p) => p.b).concat([0, opts.cushion || 0]);
+  const vals = all.flat().map((p) => p.b).concat(opts.zero === false ? [] : [0, opts.cushion || 0]);
   let lo = Math.min(...vals), hi = Math.max(...vals);
   const span = hi - lo || 100000;
-  const step = [10000, 50000, 100000, 200000, 500000, 1000000].find((s) => span / s <= 6) || 2000000;
+  const step = [10000, 50000, 100000, 200000, 500000, 1000000, 2000000, 5000000, 10000000, 25000000, 50000000, 100000000, 250000000]
+    .find((s) => span / s <= 6) || (span <= 12000000 ? 2000000 : 500000000);
   lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
   const X = (t) => L + (t - x0) / Math.max(1, x1 - x0) * (W - L - R);
   const Y = (v) => T + (hi - v) / Math.max(1, hi - lo) * (H - T - B);
@@ -26,16 +29,18 @@ export function lineChart(host, series, opts = {}) {
     svg('text', { x: L - 6, y: Y(v) + 4, 'text-anchor': 'end' }, root).textContent = money0(v);
   }
   const first = new Date(x0); first.setDate(1);
-  for (let d = new Date(first.getFullYear(), first.getMonth() + 1, 1); d.getTime() <= x1; d = new Date(d.getFullYear(), d.getMonth() + 2, 1)) {
+  // a label every other month; over more than about a year, fewer of them and each with its year
+  const monthsShown = (x1 - x0) / (30.44 * 864e5), every = Math.max(2, Math.ceil(monthsShown / 8));
+  for (let d = new Date(first.getFullYear(), first.getMonth() + 1, 1); d.getTime() <= x1; d = new Date(d.getFullYear(), d.getMonth() + every, 1)) {
     svg('text', { x: X(d.getTime()), y: H - 6, 'text-anchor': 'middle' }, root).textContent =
-      d.toLocaleDateString('en-US', { month: 'short' }) + (d.getMonth() === 0 ? ' ' + String(d.getFullYear()).slice(2) : '');
+      d.toLocaleDateString('en-US', { month: 'short' }) + (d.getMonth() === 0 || every > 2 ? ' ' + String(d.getFullYear()).slice(2) : '');
   }
-  svg('line', { x1: L, x2: W - R, y1: Y(0), y2: Y(0), stroke: css('--bad'), 'stroke-dasharray': '4 4' }, root);
+  if (opts.zero !== false) svg('line', { x1: L, x2: W - R, y1: Y(0), y2: Y(0), stroke: css('--bad'), 'stroke-dasharray': '4 4' }, root);
   if (opts.cushion) svg('line', { x1: L, x2: W - R, y1: Y(opts.cushion), y2: Y(opts.cushion), stroke: css('--warn'), 'stroke-dasharray': '2 4' }, root);
   all.forEach((pts, si) => {
     const s = series[si];
     let d = 'M' + X(pts[0].t) + ',' + Y(pts[0].b);
-    for (let i = 1; i < pts.length; i++) d += 'H' + X(pts[i].t) + 'V' + Y(pts[i].b);
+    for (let i = 1; i < pts.length; i++) d += opts.straight ? 'L' + X(pts[i].t) + ',' + Y(pts[i].b) : 'H' + X(pts[i].t) + 'V' + Y(pts[i].b);
     if (series.length === 1) {
       // the area between the line and $0 (or the bottom when the axis starts above $0)
       const base = Y(Math.max(lo, Math.min(0, hi)));

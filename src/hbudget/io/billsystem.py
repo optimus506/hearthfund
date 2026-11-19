@@ -18,6 +18,7 @@ import yaml
 from jsonschema import Draft202012Validator, FormatChecker
 from yaml.events import AliasEvent
 
+from hbudget.core import labels as label_rules
 from hbudget.core import money
 from hbudget.core.dates import clamp_day
 from hbudget.core.models import (
@@ -262,7 +263,7 @@ def check(doc: dict[str, object]) -> list[str]:
     if len(accounts) != len(_list(doc, 'accounts')):
         errors.append('accounts: an id is used twice')
     cards = {k for k, v in accounts.items() if v == 'credit_card'}
-    debts = {k for k, v in accounts.items() if v not in ('checking', 'savings')}
+    debts = {k for k, v in accounts.items() if v not in ('checking', 'savings', 'investment')}
     for i, a in enumerate(_list(doc, 'accounts')):
         for k in ('balance', 'payment', 'minimum', 'limit'):
             money_at('accounts[%d].%s' % (i, k), a.get(k))
@@ -352,6 +353,8 @@ def _resolve_schedule(d: Mapping[str, Any], as_of: date, name: str, warnings: li
         nxt = (y + 1, 1) if m == 12 else (y, m + 1)
         if cadence is Cadence.MONTHLY and day:
             start = _first_on_or_after((clamp_day(y, m, day), clamp_day(*nxt, day)), as_of)
+            if int(d.get('interval') or 1) > 1:
+                warnings.append('Set a start date for %s so it falls in the right months.' % name)
         elif cadence is Cadence.SEMIMONTHLY and days:
             start = _first_on_or_after([clamp_day(yy, mm, x) for yy, mm in ((y, m), nxt) for x in days], as_of)
         elif cadence is Cadence.YEARLY and month and day:
@@ -368,6 +371,15 @@ def _months(spec: str) -> frozenset[int]:
     return parse_months(spec)
 
 
+def _labels(raw: object, name: str) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    try:
+        return label_rules.clean(raw if isinstance(raw, list | tuple) else [str(raw)])
+    except ValueError as e:
+        raise ImportProblem('%s: %s' % (name, e)) from None
+
+
 def _series(s: Mapping[str, Any], kind: Kind, as_of: date, warnings: list[str],
             watermarks: Mapping[str, date | None]) -> Series:
     month_amounts: dict[int, Cents] = {}
@@ -380,7 +392,8 @@ def _series(s: Mapping[str, Any], kind: Kind, as_of: date, warnings: list[str],
         funded_by=s.get('funded_by'), status=Status(s.get('status') or 'none'), card=s.get('card'), debt=s.get('debt'),
         group=s.get('group'), month_amounts=tuple(sorted(month_amounts.items())),
         cycle_amounts=tuple(_cents(x) for x in s.get('cycle') or ()), active=bool(s.get('active', True)),
-        notes=s.get('notes') or '', generated_through=watermarks.get(s['id']))
+        notes=s.get('notes') or '', generated_through=watermarks.get(s['id']),
+        labels=_labels(s.get('labels'), s['name']), no_schedule=bool(s.get('no_schedule', False)))
 
 
 def _opt_cents(v: object) -> Cents | None:
@@ -421,6 +434,7 @@ def _settings(doc: Mapping[str, object]) -> Settings:
         cushion=_cents(al['cushion']) if 'cushion' in al else ad.cushion,
         bill_variance_bp=_bp(al['bill_variance_pct']) if 'bill_variance_pct' in al else ad.bill_variance_bp,
         unscheduled_days=int(al.get('unscheduled_days', ad.unscheduled_days)),
+        debt_update_days=int(al.get('debt_update_days', ad.debt_update_days)),
         expected_grace_days=int(al.get('expected_grace_days', ad.expected_grace_days)),
         unmatched_recurring=bool(al.get('unmatched_recurring', ad.unmatched_recurring)),
         income=tuple(IncomeAlert(series_id=a['series'], min_avg_bp=_bp(a.get('min_avg_pct', 85)),
@@ -484,7 +498,7 @@ def _ledger_row(r: Mapping[str, Any]) -> LedgerRow:
         amount_was=_opt_cents(r.get('amount_was')), overridden=bool(r.get('overridden', False)), card=r.get('card'),
         paid=_cents(r.get('paid', 0)), paid_txn_ids=tuple(r.get('paid_txns') or ()),
         paid_at_change=_cents(r.get('paid_at_change', 0)), cleared_txn_id=r.get('cleared_txn'),
-        cleared_on=_d(r.get('cleared_on')), note=r.get('note') or '')
+        cleared_on=_d(r.get('cleared_on')), note=r.get('note') or '', labels=_labels(r.get('labels'), r['name']))
 
 
 def _expected(e: Mapping[str, Any]) -> ExpectedItem:
@@ -655,6 +669,10 @@ def _series_doc(s: Series) -> dict[str, object]:
         out['active'] = False
     if s.notes:
         out['notes'] = s.notes
+    if s.labels:
+        out['labels'] = list(s.labels)
+    if s.no_schedule:
+        out['no_schedule'] = True
     return out
 
 
@@ -713,7 +731,7 @@ def _alerts_doc(a: AlertSettings) -> dict[str, object]:
     return {
         'cushion': _m(a.cushion), 'bill_variance_pct': _pct(a.bill_variance_bp),
         'unscheduled_days': a.unscheduled_days, 'expected_grace_days': a.expected_grace_days,
-        'unmatched_recurring': a.unmatched_recurring,
+        'unmatched_recurring': a.unmatched_recurring, 'debt_update_days': a.debt_update_days,
         'income': [{'series': i.series_id, 'min_avg_pct': _pct(i.min_avg_bp), 'window': i.window,
                     **({'short_by': _m(i.short_by)} if i.short_by is not None else {})} for i in a.income],
         'caps': [{'id': c.id, 'name': c.name, 'rules': list(c.rule_ids), 'period': c.period, 'amount': _m(c.amount)}
@@ -730,7 +748,7 @@ def _row_doc(r: LedgerRow) -> dict[str, object]:
         'amount_was': None if r.amount_was is None else _m(r.amount_was), 'overridden': r.overridden,
         'card': r.card, 'paid': _m(r.paid), 'paid_txns': list(r.paid_txn_ids), 'paid_at_change': _m(r.paid_at_change),
         'cleared_txn': r.cleared_txn_id, 'cleared_on': r.cleared_on.isoformat() if r.cleared_on else None,
-        'note': r.note,
+        'note': r.note, **({'labels': list(r.labels)} if r.labels else {}),
     }
 
 
@@ -847,14 +865,16 @@ def dump_json(doc: dict[str, object]) -> str:
 
 # ---------------------------------------------------------------- simple CSV of bills
 CSV_COLUMNS = ('name', 'kind', 'amount', 'cadence', 'start', 'day', 'days', 'month', 'weekend', 'status',
-               'funded_by', 'card', 'group')
+               'funded_by', 'card', 'group', 'interval')
+CSV_EVERY = {'quarterly': 3}   # words the simple CSV also takes for "monthly with interval N"
 
 
 def bills_csv(data: bytes, *, today: date | None = None) -> list[Series]:
     """One series per line: name,kind,amount,cadence,start,day,days,month,weekend,status,funded_by,card,group.
 
     `days` holds the two semimonthly days separated by ";" or a space. `start` may be empty when `today` is given and
-    the pattern is fully described by day/days/month.
+    the pattern is fully described by day/days/month. `interval` (optional) is every N weeks or months; the cadence
+    `quarterly` is read as monthly with interval 3, counted from `start`.
     """
     from .csvfile import read_rows
     rows = read_rows(data)
@@ -878,7 +898,13 @@ def bills_csv(data: bytes, *, today: date | None = None) -> list[Series]:
         try:
             kind = {'income': Kind.INCOME, 'bill': Kind.BILL, 'spending': Kind.SPENDING}[get(row, 'kind').lower()]
             sched: dict[str, Any] = {'cadence': get(row, 'cadence').lower()}
+            if sched['cadence'] in CSV_EVERY:
+                sched.update(cadence='monthly', interval=CSV_EVERY[sched['cadence']])
             Cadence(sched['cadence'])
+            if get(row, 'interval'):
+                sched['interval'] = int(get(row, 'interval'))
+                if not 1 <= sched['interval'] <= 52:
+                    raise ValueError('interval is 1 to 52')
             for col in ('day', 'month'):
                 if get(row, col):
                     sched[col] = int(get(row, col))
@@ -892,6 +918,8 @@ def bills_csv(data: bytes, *, today: date | None = None) -> list[Series]:
                 sched['start'] = date.fromisoformat(get(row, 'start')).isoformat()
             elif today is None:
                 raise ValueError('a start date is needed')
+            elif sched['cadence'] == 'monthly' and sched.get('interval', 1) > 1:
+                raise ValueError('a start date is needed, so the item falls in the right months')
             amount = money.parse(get(row, 'amount'))
             if amount < 0:
                 raise ValueError('amounts are positive; the kind says money in or out')

@@ -1,7 +1,7 @@
 # Importing into Hearthfund
 
-Four ways to get your budget in, and two kinds of bank file to reconcile against it. All of them are on
-**More > Import** and **Money > Uploads**; the command line does the same (`hbudget import-bills`, `import-workbook`,
+Four ways to get your budget in, two kinds of bank file to reconcile against it, and files with investment balances. They are on
+**More > Import**, **Money > Uploads** and **Money > Investments**; the command line does the first two (`hbudget import-bills`, `import-workbook`,
 `reconcile`; see the [README](../README.md#command-line)).
 
 Amounts are always written as positive numbers with at most two decimals (`150`, `150.5`, `1,800.00`). Whether a line
@@ -56,8 +56,9 @@ name,kind,amount,cadence,start,day,days,month,weekend,status,funded_by,card,grou
 | `name` | what the row is called, e.g. `Electric` |
 | `kind` | `income`, `bill` or `spending` (a budget line such as groceries: no status) |
 | `amount` | positive, e.g. `150` or `1,800.00` |
-| `cadence` | `once`, `weekly`, `biweekly`, `semimonthly`, `monthly` or `yearly` |
-| `start` | `YYYY-MM-DD`. Needed for `weekly` and `biweekly` (see below) and `once`; otherwise optional |
+| `cadence` | `once`, `weekly`, `biweekly`, `semimonthly`, `monthly` or `yearly`; `quarterly` is read as `monthly` with `interval` 3 |
+| `start` | `YYYY-MM-DD`. Needed for `weekly` and `biweekly` (see below), `once` and anything with an `interval` above 1; otherwise optional |
+| `interval` | optional. `weekly`: every N weeks. `monthly`: every N months, counted from `start` (3 is quarterly, 6 is twice a year) |
 | `day` | monthly / yearly: day of the month, 1-31. Day 31 means the last day (the 30th, or the 28th/29th in February) |
 | `days` | semimonthly: the two days, separated by `;`, e.g. `1;15` |
 | `month` | yearly: 1-12 |
@@ -71,6 +72,10 @@ name,kind,amount,cadence,start,day,days,month,weekend,status,funded_by,card,grou
 one also needs the right week. Any past date on the right weekday (and, for biweekly, the right week) works: rows are
 only made from the household's checkbook date on. Without a start, the line starts on the day you import it. For a
 new household, use a recent date, such as your last payday.
+
+**Every few months.** A bill charged every three months is `monthly` with `interval` 3 (or `quarterly`). The months
+are counted from `start`: a start of `2028-12-01` gives December, March, June and September. In the app, choose
+**Every 3 months** under *Repeats* on **Bills > Bill setup** and set the first date.
 
 A bills CSV has no checkbook balance: set it on **More > Settings** afterwards.
 Example: [examples/bills.example.csv](../examples/bills.example.csv).
@@ -115,3 +120,24 @@ with account numbers masked (the last four digits stay).
 
 How a reconciliation works (proposals, *clear* and *reduce*, card-payment bundles):
 [README: Reconciling with the bank](../README.md#reconciling-with-the-bank).
+
+## 5. Investment files
+
+On **Money > Investments > Bring in a file**: what an investment or retirement account held on a date. The file is
+read and thrown away; only dates and totals are kept, never what the account holds or its transactions. Before
+anything is saved you see what was read and choose the account it goes to (or a new one).
+
+- **OFX / QFX statement** (often offered as "Quicken" by the broker or the plan): the statement date and the
+  value of the holdings plus the cash. Some brokers count the cash among the holdings too; the page shows both
+  parts, so compare the sum with the total on the statement and correct it if needed. A file with transactions
+  only has no value to read: download the statement or the positions.
+- **A table with dates** (.csv, .ods, .xlsx): a row of column names with a date column (`Date`, `As of`, ...)
+  and a balance column (`Balance`, `Ending balance`, `Account value`, `Value`, ...). Your own table can have one
+  column per account instead (`Date, Plan at work, Brokerage`), or an `Account` column. This is the quick way to
+  bring in years of history: one row per statement is enough.
+- **A positions export** (.csv): a row per holding with a `Current value`, `Market value` or `Total value`
+  column. The values are added up, per account when the file has an account column; total lines are left out.
+  Such a file has no date, so today is filled in; change it if the file is older.
+
+Balances after today are left out. Long histories are thinned as on the page: every day for six weeks, then one
+a week for two years, then one a month.

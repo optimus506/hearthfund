@@ -214,3 +214,12 @@ if (menu) {
 if ('serviceWorker' in navigator && window.isSecureContext) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
+
+// labels (D-104): the chips a row shows after its name: its labels, and "on <card>" for a row a credit card pays
+export function labelChips(r, cards) {
+  const out = (r.labels || []).map((t) => el('span', { class: 'chip label', text: t }));
+  if (r.card && r.kind !== 'income') out.push(el('span', { class: 'chip label card', text: 'on ' + ((cards || {})[r.card] || r.card), title: 'Paid with this card: the money is in the move to the card, not a second charge' }));
+  return out;
+}
+// "blue card, paid early" -> ['blue card', 'paid early']
+export const labelList = (text) => text.split(',').map((t) => t.trim()).filter(Boolean);

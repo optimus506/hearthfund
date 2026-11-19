@@ -10,7 +10,19 @@ from typing import TYPE_CHECKING
 
 from .dates import add_months, week_start
 from .forecast import Forecast
-from .models import BankTxn, Budget, CapRule, Kind, LedgerRow, RowState, RuleKind, Severity, Status, row_status
+from .models import (
+    BankTxn,
+    Budget,
+    CapRule,
+    Kind,
+    LedgerRow,
+    RowState,
+    RuleKind,
+    Severity,
+    Status,
+    needs_scheduling,
+    row_status,
+)
 from .money import Cents, fmt
 from .rules import classify
 
@@ -72,12 +84,13 @@ def cap_totals(budget: Budget, history: Sequence[BankTxn], *, today: date) -> li
 def unscheduled(budget: Budget, *, today: date) -> list[LedgerRow]:
     """Open bills due within the alert window (settings.alerts.unscheduled_days) that are neither scheduled nor on
     autopay, in due-date order: the "unscheduled" alerts and the summary strip's "Not scheduled". Bills paid with a
-    credit card are left out: nothing is scheduled from checking for them (the card's own payment row is)."""
+    credit card are left out: nothing is scheduled from checking for them (the card's own payment row is). So are
+    the rows of an item marked "nothing to schedule" (D-104: an allowance that its charges pay down)."""
     soon = today + timedelta(days=budget.settings.alerts.unscheduled_days)
     by_id = budget.series_by_id()
     return [r for r in sorted(budget.rows, key=lambda r: (r.due_date, r.order_date, r.seq))
             if r.state is RowState.OPEN and r.kind is Kind.BILL and r.amount != 0 and r.due_date <= soon
-            and not r.card and row_status(r, by_id) is Status.NONE]
+            and not r.card and row_status(r, by_id) is Status.NONE and needs_scheduling(r, by_id)]
 
 
 RECENT_MONTHS = 12          # repeating-payee alerts look at this many calendar months, this one included
@@ -185,8 +198,16 @@ def evaluate(budget: Budget, forecast: Forecast, *, today: date, recent: Applied
             if ia is not None and ia.short_by is not None and posted < budgeted - ia.short_by:
                 out.append(Alert('income_check_short', Severity.WARN, '%s deposit of %s is %s short of the budget %s.'
                                  % (r.name, fmt(posted), fmt(budgeted - posted), fmt(budgeted)), r.id))
+        chosen = dict(recent.assigned)       # lines the person chose rows for: only the rest is unmatched
         for u in res.unknown:
             t = txns[u.txn_id]
+            if u.txn_id in chosen:
+                rest = abs(t.amount) - chosen[u.txn_id]
+                if rest > 0:
+                    out.append(Alert('unmatched', Severity.WARN, 'Unmatched bank item: %s of %d/%d %s %s paid no '
+                                     'budget row.' % (fmt(rest), t.posted.month, t.posted.day, fmt(t.amount),
+                                                      t.description[:40])))
+                continue
             out.append(Alert('unmatched', Severity.WARN, 'Unmatched bank item: %d/%d %s %s (%s).'
                              % (t.posted.month, t.posted.day, fmt(t.amount), t.description[:40], u.reason)))
 
@@ -221,4 +242,23 @@ def evaluate(budget: Budget, forecast: Forecast, *, today: date, recent: Applied
         if e.status == 'open' and e.date < late:
             out.append(Alert('expected_late', Severity.INFO, '%s was expected on %s and has not posted. Mark it done '
                              'if it went through.' % (e.label, _d(e.date)), data=(('expected', e.id),)))
+    # imported here: debtcheck needs payoff, which needs the ledger, which this module is imported by
+    from . import debtcheck
+    old = debtcheck.due(budget, today)
+    if old:
+        months = max(1, round(a.debt_update_days / 30.5))
+        names = ', '.join(x.name for x in old[:4]) + (' and %d more' % (len(old) - 4) if len(old) > 4 else '')
+        out.append(Alert('debt_balances', Severity.WARN, '%s not updated for more than %s: %s. Look at the '
+                         'statements and enter what is owed now.'
+                         % ('1 debt balance was' if len(old) == 1 else '%d debt balances were' % len(old),
+                            '1 month' if months == 1 else '%d months' % months, names),
+                         data=(('count', str(len(old))),)))
+    for x in debtcheck.promos_ending(budget.accounts, today):
+        assert x.promo_ends is not None
+        days = (x.promo_ends - today).days
+        when = 'today' if days == 0 else 'in 1 day' if days == 1 else 'in %d days' % days
+        more = ' Interest for the whole promo is charged if it is not paid off by then.' if x.deferred_interest else ''
+        out.append(Alert('promo_ending', Severity.WARN if x.deferred_interest else Severity.INFO,
+                         'The promo rate on %s ends %s (%s), with %s still owed.%s'
+                         % (x.name, _d(x.promo_ends), when, fmt(x.balance), more), data=(('account', x.id),)))
     return out

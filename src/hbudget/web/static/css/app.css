@@ -82,6 +82,9 @@ nav.tabs a[aria-current="page"] { color: var(--accent); border-bottom-color: var
 .alerts:empty { display: none; }
 .alert { display: flex; gap: 10px; padding: 9px 12px; border-radius: var(--radius); background: var(--warn-soft); font-size: .9rem; }
 .alert.bad { background: var(--bad-soft); } .alert.info { background: var(--accent-soft); }
+/* an alert with two buttons (the debt balances reminder) is wider than a phone: its buttons go under the text */
+@media (max-width: 620px) { .alert:has(.row-actions) { flex-wrap: wrap; } .alert:has(.row-actions) > span:nth-child(2) { flex: 1 1 0; min-width: 0; }
+  .alert > .row-actions { flex-basis: 100%; } }
 .alert .tag { font-weight: 700; font-size: .72rem; text-transform: uppercase; color: var(--warn); padding-top: 2px; white-space: nowrap; }
 .alert.bad .tag { color: var(--bad); } .alert.info .tag { color: var(--accent); }
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px;
@@ -193,6 +196,11 @@ th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line
 th { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); }
 td.r, th.r { text-align: right; white-space: nowrap; }
 tr.total td { font-weight: 600; }
+.neg { color: var(--bad); }
+td small.sub { display: block; color: var(--ink-3); white-space: normal; max-width: 22em; }
+td.r small.sub { margin-left: auto; } td.neg small.sub { color: inherit; }
+#invShow, #invRange, #invFound select, #invFound input { width: auto; max-width: 100%; }
+#invFound td { vertical-align: top; }
 .verdict { padding: 11px 14px; border-radius: var(--radius); display: grid; gap: 4px; }
 .verdict b { font-size: 1.05rem; }
 .verdict.good { background: var(--good-soft); } .verdict.good b { color: var(--good); }
@@ -202,6 +210,9 @@ tr.total td { font-weight: 600; }
 .chip.good { background: var(--good-soft); color: var(--good); }
 .chip.warn { background: var(--warn-soft); color: var(--warn); }
 .chip.bad { background: var(--bad-soft); color: var(--bad); }
+/* labels on bill rows (D-104): quieter than a status chip, and they wrap with the name */
+.chip.label { margin-left: 6px; font-size: .7rem; font-weight: 600; padding: 1px 7px; vertical-align: 1px; display: inline-block; }
+.chip.label.card { background: transparent; color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line); }
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .kpi { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
 .kpi b { font-size: 1.1rem; }
@@ -213,6 +224,10 @@ tr.total td { font-weight: 600; }
 .item .what { display: grid; min-width: 0; }
 .empty { padding: 20px 12px; text-align: center; color: var(--ink-2); }
 .msg { font-size: .88rem; } .msg.err { color: var(--bad); } .msg.ok { color: var(--good); }
+/* reconcile: the rows a bank line paid, ticked by the person */
+.pickslot { margin-top: 6px; } .picklist { display: grid; gap: 2px; margin: 6px 0; }
+.picklist label { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 32px; }
+.picker .bad, #recApplyNote { color: var(--bad); font-weight: 600; } #recApplyNote:empty { display: none; }
 .item > .confirm { flex: 1 1 100%; border-left: 3px solid var(--bad); padding: 6px 10px; display: grid; gap: 6px; }
 .formmsg { margin-top: -4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

@@ -3,7 +3,8 @@
 import { api, $, el, money, longD, page, can, busy, say } from './api.js';
 
 const TAG = { below_zero: 'Below $0', cushion: 'Cushion', bill_variance: 'Bill', unmatched: 'Bank', unmatched_recurring: 'Repeat', unbudgeted: 'Not budgeted',
-  income_short: 'Income', income_check_short: 'Pay', cap: 'Cap', unscheduled: 'Schedule', expected_late: 'Expected' };
+  income_short: 'Income', income_check_short: 'Pay', cap: 'Cap', unscheduled: 'Schedule', expected_late: 'Expected',
+  debt_balances: 'Debts', promo_ending: 'Promo' };
 
 export function renderSummary(s) {
   const strip = $('strip'), box = $('alerts'), link = $('alertlink');
@@ -55,11 +56,20 @@ function slim(strip, s, lowCls, link) {
 // where each alert is dealt with (#98): the check-in step links there, and the page shows the way back
 const FIX_AT = { below_zero: ['bills', 'Bills'], cushion: ['bills', 'Bills'], bill_variance: ['checkup', 'Check-up'],
   unmatched: ['reconcile', 'Uploads'], income_short: ['series', 'Bill setup'], income_check_short: ['series', 'Bill setup'],
-  cap: ['checkup', 'Check-up'], expected_late: ['bills', 'Bills'] };
+  cap: ['checkup', 'Check-up'], expected_late: ['bills', 'Bills'], promo_ending: ['debts', 'Debts'] };
 
 function actions(a) {
   const payee = a.data && a.data.payee;
   const h = '/h/' + page.hid + '/';
+  if (a.code === 'debt_balances') {
+    // the reminder to update typed debt balances (D-105): the quick form on Debts, or two weeks' peace
+    return el('span', { class: 'row-actions' }, el('a', { class: 'btn small', href: h + 'debts?checkin=3&update=1', text: 'Enter balances' }),
+      can('contributor') ? el('button', { class: 'btn small', type: 'button', text: 'Remind me in 2 weeks', onclick: async (ev) => {
+        const b = ev.currentTarget;
+        try { await busy(b, () => api('PUT', '/accounts/reminder/later', { days: 14 }), '…'); await loadSummary(); }
+        catch (e) { say(b, e.message, 'err'); }
+      } }) : null);
+  }
   if (FIX_AT[a.code]) return el('a', { class: 'btn small', href: h + FIX_AT[a.code][0] + '?checkin=3', text: 'Open ' + FIX_AT[a.code][1] });
   if (!payee || !['unmatched_recurring', 'unbudgeted'].includes(a.code) || !can('contributor')) return null;
   const ignore = el('button', { class: 'btn small', type: 'button', text: 'Ignore until it posts again', onclick: async (ev) => {

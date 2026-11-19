@@ -1,5 +1,5 @@
 // Bills tab: rows grouped by the payday that funds them, status marks, Change / Already paid / Won’t be paid / Undo, chart, table.
-import { api, $, el, money, fmtD, shortD, toCents, centsInput, can, say, busy, table, arm } from './api.js';
+import { api, $, el, money, fmtD, shortD, toCents, centsInput, can, say, busy, table, arm, labelChips, labelList } from './api.js';
 import { loadSummary } from './summary.js';
 import { lineChart } from './chart.js';
 
@@ -9,6 +9,8 @@ import { lineChart } from './chart.js';
 const state = { data: null, expected: [], weeks: 8, editing: null, editVal: null, focusEdit: false, q: '', picked: new Set(),
   open: new Set(), spend: new Set() };
 const STATUS_TEXT = { none: 'Not yet', manual: 'Scheduled', autopay: 'Autopay' };
+// an item marked "nothing to schedule" (D-104): its rows do not ask to be scheduled
+const statusText = (r) => (r.no_schedule && r.status === 'none' ? 'Nothing to do' : STATUS_TEXT[r.status] || r.status);
 const msg = $('msg');
 const DAY = 86400000;
 
@@ -65,7 +67,7 @@ function editor(r) {
       el('button', { class: 'btn', type: 'button', text: 'Cancel', onclick: cancel })),
     el('p', { class: 'muted small', text: (income ? 'Already received: the money is in the bank, take it out of the forecast. Won’t come in: it is not coming.'
       : 'Already paid: it has left the bank, take it out of the forecast. Won’t be paid: skip it and keep the money in the budget.') + ' Both can be undone.' }),
-    noteForm(r));
+    noteForm(r), labelsForm(r));
 }
 
 // a note on this one row ("paid by phone"); saved on its own, an empty note clears it
@@ -74,6 +76,18 @@ function noteForm(r) {
   const btn = el('button', { class: 'btn', type: 'button', text: 'Save note', onclick: () => rowAction(r, 'note', { note: inp.value }, btn) });
   inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
   return el('div', { class: 'form' }, el('div', { class: 'field' }, el('label', { for: inp.id, text: 'Note' }), inp), el('div', { class: 'field' }, btn));
+}
+
+// this row's own labels ("paid early", "on the blue card this time"); its recurring item's are set on Bill setup
+function labelsForm(r) {
+  if (!can('contributor')) return null;
+  const inherited = (r.labels || []).filter((t) => !(r.own_labels || []).includes(t));
+  const inp = el('input', { type: 'text', id: 'lab-' + r.id, maxlength: '140', value: (r.own_labels || []).join(', '), list: 'labelsKnown', placeholder: 'e.g. paid early', 'aria-label': 'Labels on this bill' });
+  const btn = el('button', { class: 'btn', type: 'button', text: 'Save labels', onclick: () => rowAction(r, 'labels', { labels: labelList(inp.value) }, btn) });
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') btn.click(); });
+  return el('div', { class: 'form' }, el('div', { class: 'field' }, el('label', { for: inp.id, text: 'Labels (commas between)' }), inp,
+    inherited.length ? el('small', { class: 'muted', text: 'From the recurring item: ' + inherited.join(', ') }) : null), el('div', { class: 'field' }, btn),
+    el('datalist', { id: 'labelsKnown' }, ...(state.data.labels || []).map((t) => el('option', { value: t }))));
 }
 
 function groups(rows) {
@@ -108,8 +122,8 @@ function renderFind() {
     const t = table([all, 'Due', 'Item', { t: 'Amount', r: true }, 'Status'], rows.map((r) => el('tr', {},
       el('td', {}, el('input', { type: 'checkbox', 'aria-label': 'Select ' + r.name + ' ' + r.due, checked: state.picked.has(r.id),
         onchange: (e) => { if (e.target.checked) state.picked.add(r.id); else state.picked.delete(r.id); renderBulk(); } })),
-      el('td', { class: 'num', text: shortD(r.due) + '/' + r.due.slice(2, 4) }), el('td', { text: r.name + (r.amount_was != null ? ' (changed)' : '') }),
-      el('td', { class: 'r num', text: money(-r.amount, true) }), el('td', { text: r.spending ? 'budget line' : { none: 'Not yet', manual: 'Scheduled', autopay: 'Autopay' }[r.status] || r.status }))));
+      el('td', { class: 'num', text: shortD(r.due) + '/' + r.due.slice(2, 4) }), el('td', {}, r.name + (r.amount_was != null ? ' (changed)' : ''), ...labelChips(r, state.data.cards)),
+      el('td', { class: 'r num', text: money(-r.amount, true) }), el('td', { text: r.spending ? 'budget line' : statusText(r) }))));
     t.classList.add('tall');
     box.replaceChildren(t, rows.length === MAX_FOUND ? el('p', { class: 'muted small', text: 'Showing the first ' + MAX_FOUND + '; narrow the search.' }) : '');
   }
@@ -224,11 +238,11 @@ function billRow(r, d) {
   const itemNotes = r.series_id && (d.series.find((s) => s.id === r.series_id) || {}).notes;
   const flip = () => { toggle(state.open, r.id); if (!state.open.has(r.id) && state.editing === r.id) closeEditor(); renderList(); };
   const right = el('div', { class: 'right' }, el('span', { class: 'amt num' }, changed ? el('span', { class: 'was', text: money(r.amount_was) }) : null, money(r.amount)));
-  const label = r.spending || removed ? (removed ? 'Undo…' : 'Change…') : STATUS_TEXT[r.status] || r.status;
+  const label = r.spending || removed ? (removed ? 'Undo…' : 'Change…') : statusText(r);
   right.append(el('button', { class: 'pill' + (r.spending || removed ? ' plain' : ' s-' + r.status), type: 'button', 'aria-expanded': String(open),
     'aria-label': (r.spending || removed ? '' : 'Status: ' + label + '. ') + 'Change ' + r.name, text: label, onclick: flip }));
   const row = el('div', { class: 'bill compact' + (removed ? ' removed' : '') + (open ? ' open' : ''), 'data-status': removed || r.spending ? 'none' : r.status },
-    el('i', { class: 'stripe' }), el('div', { class: 'what', onclick: flip }, el('span', { class: 'name', text: r.name, title: itemNotes || null }), meta), right);
+    el('i', { class: 'stripe' }), el('div', { class: 'what', onclick: flip }, el('span', { class: 'name', title: itemNotes || null }, r.name, ...(removed ? [] : labelChips(r, d.cards))), meta), right);
   const out = [row];
   if (open) {
     const acts = el('div', { class: 'acts' });

@@ -1,5 +1,5 @@
 // Bill setup tab (Bills > Bill setup; the page key stays "series"): income, bills and spending lines (the recurring items rows are generated from), seasonal amounts.
-import { api, $, el, money, longD, toCents, centsInput, can, say, busy, submitter, arm, table } from './api.js';
+import { api, $, el, money, longD, toCents, centsInput, can, say, busy, submitter, arm, table, labelList } from './api.js';
 import { loadSummary } from './summary.js';
 
 const msg = $('msg');
@@ -8,11 +8,11 @@ const CADENCE = { once: 'One time', weekly: 'Weekly', biweekly: 'Every 2 weeks',
 
 function describe(s) {
   const c = s.schedule;
-  let when = CADENCE[c.cadence] || c.cadence;
+  const every = c.interval > 1 && (c.cadence === 'monthly' || c.cadence === 'weekly');
+  let when = every ? 'Every ' + c.interval + (c.cadence === 'monthly' ? ' months' : ' weeks') : CADENCE[c.cadence] || c.cadence;
   if (c.cadence === 'monthly' && c.day) when += ' on day ' + c.day;
   if (c.cadence === 'semimonthly' && c.days) when += ' on days ' + c.days.join(' and ');
   if (c.cadence === 'yearly' && c.month) when += ' in month ' + c.month + (c.day ? ', day ' + c.day : '');
-  if (c.interval > 1 && c.cadence !== 'biweekly') when += ', every ' + c.interval;
   if (c.weekend !== 'none') when += ' (weekend ' + c.weekend + ')';
   return when + ' · from ' + longD(c.start) + (c.end ? ' to ' + longD(c.end) : '');
 }
@@ -34,7 +34,8 @@ function render() {
 
 function list(items) {
   return table(['Name', { t: 'Amount', r: true }, 'Schedule', 'Status', ''], items.map((s) => el('tr', {},
-    el('td', {}, s.name + (s.active ? '' : ' (paused)'), s.notes ? el('div', { class: 'muted small', text: s.notes }) : null),
+    el('td', {}, s.name + (s.active ? '' : ' (paused)'), ...(s.labels || []).map((t) => el('span', { class: 'chip label', text: t })),
+      s.no_schedule ? el('span', { class: 'chip label card', text: 'nothing to schedule' }) : null, s.notes ? el('div', { class: 'muted small', text: s.notes }) : null),
     el('td', { class: 'r num', text: money(s.amount) + (s.month_amounts.length ? ' (seasonal)' : '') + (s.cycle_amounts.length ? ' (cycle)' : '') }),
     el('td', { class: 'small', text: describe(s) + (s.funded_by ? ' · paid from ' + (series.find((x) => x.id === s.funded_by) || {}).name : '') }),
     el('td', { text: s.status }),
@@ -46,20 +47,33 @@ function list(items) {
         api('DELETE', '/series/' + encodeURIComponent(s.id)).then(load, (e) => say(msg, e.message, 'err')); } })) : null))));
 }
 
-const fields = ['sId', 'sName', 'sKind', 'sAmount', 'sCadence', 'sStart', 'sEnd', 'sInterval', 'sDay', 'sDays', 'sMonth', 'sWeekend', 'sFunded', 'sStatus', 'sCard', 'sDebt', 'sGroup', 'sActive', 'sNotes'];
+const fields = ['sId', 'sName', 'sKind', 'sAmount', 'sCadence', 'sStart', 'sEnd', 'sInterval', 'sDay', 'sDays', 'sMonth', 'sWeekend', 'sFunded', 'sStatus', 'sCard', 'sDebt', 'sGroup', 'sActive', 'sNotes', 'sLabels', 'sNoSchedule'];
 function edit(s) {
   $('sId').value = s.id; $('sName').value = s.name; $('sKind').value = s.kind; $('sAmount').value = centsInput(s.amount);
   const c = s.schedule;
-  $('sCadence').value = c.cadence; $('sStart').value = c.start; $('sEnd').value = c.end || ''; $('sInterval').value = c.interval;
+  $('sCadence').value = c.cadence === 'monthly' && PRESETS.includes(c.interval) ? 'monthly:' + c.interval : c.cadence; $('sStart').value = c.start; $('sEnd').value = c.end || ''; $('sInterval').value = c.interval;
   $('sDay').value = c.day || ''; $('sDays').value = (c.days || []).join(','); $('sMonth').value = c.month || ''; $('sWeekend').value = c.weekend;
   $('sFunded').value = s.funded_by || ''; $('sStatus').value = s.status; $('sCard').value = s.card || ''; $('sGroup').value = s.group || '';
-  $('sActive').checked = s.active; $('sNotes').value = s.notes || ''; $('sSave').textContent = 'Save changes'; $('sCancel').hidden = false; $('sName').focus();
+  hint(); $('sActive').checked = s.active; $('sNotes').value = s.notes || ''; $('sLabels').value = (s.labels || []).join(', '); $('sNoSchedule').checked = !!s.no_schedule; $('sSave').textContent = 'Save changes'; $('sCancel').hidden = false; $('sName').focus();
   // the debt this item pays down (#97); an item with none is pre-filled with the debt of the same name
   const same = !s.debt && s.kind === 'bill' ? debts.find((a) => norm(a.name) === norm(s.name)) : null;
   $('sDebt').value = s.debt || (same ? same.id : '');
   $('sDebtHint').hidden = !same;
   $('sDebtHint').textContent = same ? 'Filled in because the names match; save to link them, or choose None.' : '';
 }
+// "Every 3 months" and its like are Monthly with "every N" filled in; the hint says which months that gives
+const PRESETS = [2, 3, 6];
+const cadence = () => $('sCadence').value.split(':');
+function hint() {
+  const [c, n] = cadence();
+  $('sCadenceHint').hidden = !(c === 'monthly' && (n || Number($('sInterval').value) > 1));
+}
+$('sCadence').addEventListener('change', () => { $('sInterval').value = cadence()[1] || '1'; hint(); });
+$('sInterval').addEventListener('input', () => {
+  const [c, n] = cadence(), v = Number($('sInterval').value);
+  if (c === 'monthly' && String(v) !== (n || '1')) $('sCadence').value = PRESETS.includes(v) ? 'monthly:' + v : 'monthly';
+  hint();
+});
 const norm = (t) => String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 let debts = [];
 function fillDebts() {
@@ -68,7 +82,7 @@ function fillDebts() {
 function reset() {
   for (const f of fields) { const n = $(f); if (n.type === 'checkbox') n.checked = true; else if (n.tagName !== 'SELECT') n.value = ''; }
   $('sKind').value = 'bill'; $('sCadence').value = 'monthly'; $('sWeekend').value = 'none'; $('sStatus').value = 'none'; $('sFunded').value = '';
-  $('sInterval').value = '1'; $('sSave').textContent = 'Add'; $('sCancel').hidden = true; $('sDebt').value = ''; $('sDebtHint').hidden = true;
+  $('sInterval').value = '1'; $('sNoSchedule').checked = false; hint(); $('sSave').textContent = 'Add'; $('sCancel').hidden = true; $('sDebt').value = ''; $('sDebtHint').hidden = true;
 }
 $('sCancel').addEventListener('click', reset);
 $('seriesForm').addEventListener('submit', async (e) => {
@@ -76,10 +90,10 @@ $('seriesForm').addEventListener('submit', async (e) => {
   const amount = toCents($('sAmount').value);
   const num = (id) => ($(id).value.trim() === '' ? null : Number($(id).value));
   const body = { name: $('sName').value.trim(), kind: $('sKind').value, amount,
-    schedule: { cadence: $('sCadence').value, start: $('sStart').value, end: $('sEnd').value || null, interval: num('sInterval') || 1,
+    schedule: { cadence: cadence()[0], start: $('sStart').value, end: $('sEnd').value || null, interval: num('sInterval') || 1,
       day: num('sDay'), days: $('sDays').value.trim() ? $('sDays').value.split(',').map((x) => Number(x.trim())) : null, month: num('sMonth'), weekend: $('sWeekend').value },
     funded_by: $('sFunded').value || null, status: $('sStatus').value, card: $('sCard').value.trim() || null, debt: $('sDebt').value || null, group: $('sGroup').value.trim() || null, active: $('sActive').checked,
-    notes: $('sNotes').value.trim() };
+    notes: $('sNotes').value.trim(), labels: labelList($('sLabels').value), no_schedule: $('sNoSchedule').checked };
   const form = e.target;
   if (!body.name || !(amount >= 0) || !body.schedule.start) { say(form, 'Enter a name, a positive amount and a start date.', 'err'); return; }
   try {
@@ -123,7 +137,9 @@ if (!can('editor')) { $('seriesForm').hidden = true; $('genBtn').hidden = true; 
 
 async function load() {
   const [sr, ac] = await Promise.all([api('GET', '/series'), api('GET', '/accounts')]);
-  series = sr.series; debts = ac.accounts.filter((a) => !['checking', 'savings'].includes(a.kind));
+  series = sr.series;
+  $('sLabelsKnown').replaceChildren(...[...new Set(series.flatMap((s) => s.labels || []))].sort().map((t) => el('option', { value: t })));
+  debts = ac.accounts.filter((a) => !['checking', 'savings', 'investment'].includes(a.kind));
   fillDebts(); render(); loadSummary();
 }
 reset();

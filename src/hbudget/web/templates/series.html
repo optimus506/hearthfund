@@ -9,10 +9,11 @@
     <div class="field"><label for="sName">Name</label><input id="sName" type="text" maxlength="60" placeholder="e.g. Electric"></div>
     <div class="field"><label for="sKind">Kind</label><select id="sKind"><option value="bill">Bill</option><option value="income">Pay</option><option value="spending">Spending budget</option></select></div>
     <div class="field"><label for="sAmount">Amount</label><input id="sAmount" type="text" inputmode="decimal" placeholder="150.00"></div>
-    <div class="field"><label for="sCadence">Repeats</label><select id="sCadence"><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="semimonthly">Twice a month</option><option value="yearly">Yearly</option><option value="once">One time</option></select></div>
+    <div class="field"><label for="sCadence">Repeats</label><select id="sCadence"><option value="monthly">Monthly</option><option value="monthly:2">Every 2 months</option><option value="monthly:3">Every 3 months (quarterly)</option><option value="monthly:6">Every 6 months</option><option value="weekly">Weekly</option><option value="biweekly">Every 2 weeks</option><option value="semimonthly">Twice a month</option><option value="yearly">Yearly</option><option value="once">One time</option></select>
+      <small class="muted" id="sCadenceHint" hidden>Counted from the first date: a first date in December gives December, March, June and September.</small></div>
     <div class="field"><label for="sStart">First date</label><input id="sStart" type="date"></div>
     <div class="field"><label for="sEnd">Last date (optional)</label><input id="sEnd" type="date"></div>
-    <div class="field"><label for="sInterval">Every N periods</label><input id="sInterval" type="text" inputmode="numeric" value="1"></div>
+    <div class="field"><label for="sInterval">Every N weeks or months</label><input id="sInterval" type="text" inputmode="numeric" value="1"></div>
     <div class="field"><label for="sDay">Day of month</label><input id="sDay" type="text" inputmode="numeric" placeholder="1-31"></div>
     <div class="field"><label for="sDays">Two days (twice a month)</label><input id="sDays" type="text" placeholder="1,15"></div>
     <div class="field"><label for="sMonth">Month (yearly)</label><input id="sMonth" type="text" inputmode="numeric" placeholder="1-12"></div>
@@ -24,6 +25,10 @@
       <small class="muted" id="sDebtHint" hidden></small></div>
     <div class="field"><label for="sGroup">Report group</label><input id="sGroup" type="text" maxlength="40"></div>
     <div class="field wide"><label for="sNotes">Notes</label><textarea id="sNotes" rows="2" maxlength="1000" placeholder="e.g. account number ending 1234, call to change the date"></textarea></div>
+    <div class="field wide"><label for="sLabels">Labels (commas between)</label><input id="sLabels" type="text" maxlength="140" list="sLabelsKnown" placeholder="e.g. blue card, pays itself down"><datalist id="sLabelsKnown"></datalist>
+      <small class="muted">A few short words shown as chips on every row of this item, on Bills and on Home. A row paid with a card gets its "on (card)" chip by itself.</small></div>
+    <div class="field"><label for="sNoSchedule"><input id="sNoSchedule" type="checkbox"> Nothing to schedule</label>
+      <small class="muted">For a line no payment is set up for, such as an allowance its charges pay down: its rows stay out of the "not scheduled" alert and the check-in list.</small></div>
     <div class="field"><label for="sActive"><input id="sActive" type="checkbox" checked> Active</label></div>
     <div class="field"><button class="btn primary" id="sSave" type="submit">Add</button></div>
     <div class="field"><button class="btn" id="sCancel" type="button" hidden>Cancel</button></div>

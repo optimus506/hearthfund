@@ -1,6 +1,6 @@
 // Settings tab: checkbook balance, alerts, reconcile matching, forecast horizon, colours and week start.
 // Spending caps live on Check-up and report groups on Report (D-074); saving here keeps them.
-import { api, $, centsInput, toCents, can, say, busy, submitter } from './api.js';
+import { api, $, el, centsInput, toCents, can, say, busy, submitter } from './api.js';
 import { loadSummary } from './summary.js';
 
 const msg = $('msg');
@@ -10,7 +10,9 @@ function render() {
   const s = data.settings;
   $('stBalance').value = centsInput(data.start_balance); $('stAsOf').value = data.as_of;
   $('stCushion').value = centsInput(s.alerts.cushion); $('stVariance').value = (s.alerts.bill_variance_bp / 100).toString();
-  $('stUnsched').value = s.alerts.unscheduled_days; $('stGrace').value = s.alerts.expected_grace_days; $('stRecurring').checked = s.alerts.unmatched_recurring;
+  $('stUnsched').value = s.alerts.unscheduled_days;
+  { const d = s.alerts.debt_update_days, sel = $('stDebts'); if (![...sel.options].some((o) => Number(o.value) === d)) sel.append(el('option', { value: String(d), text: 'Every ' + d + ' days' })); sel.value = String(d); }
+  $('stGrace').value = s.alerts.expected_grace_days; $('stRecurring').checked = s.alerts.unmatched_recurring;
   $('stBefore').value = s.reconcile.days_before; $('stAfter').value = s.reconcile.days_after;
   $('stTolPct').value = (s.reconcile.tolerance_bp / 100).toString(); $('stTolAbs').value = centsInput(s.reconcile.tolerance_abs);
   $('stMode').value = data.horizon.mode; $('stMonths').value = data.horizon.months; $('stEnd').value = data.horizon.end || '';
@@ -24,7 +26,7 @@ $('settingsForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const pctBp = (v) => Math.round(Number(v) * 100);
   const body = {
-    alerts: { cushion: toCents($('stCushion').value), bill_variance_bp: pctBp($('stVariance').value), unscheduled_days: Number($('stUnsched').value),
+    alerts: { cushion: toCents($('stCushion').value), bill_variance_bp: pctBp($('stVariance').value), unscheduled_days: Number($('stUnsched').value), debt_update_days: Number($('stDebts').value),
       expected_grace_days: Number($('stGrace').value), unmatched_recurring: $('stRecurring').checked },
     reconcile: { days_before: Number($('stBefore').value), days_after: Number($('stAfter').value), tolerance_bp: pctBp($('stTolPct').value), tolerance_abs: toCents($('stTolAbs').value) },
     horizon: { mode: $('stMode').value, months: Number($('stMonths').value), end: $('stEnd').value || null },
