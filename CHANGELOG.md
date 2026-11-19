@@ -9,6 +9,8 @@ tracker; those issues are not public, and the public tracker numbers its issues 
 
 ## Unreleased
 
+## 1.1.0 - 2026-11-19
+
 ### Added
 - **Say what a payment paid.** In a dry run, an unmatched money-out bank line now has **This paid…**: it lists
   the open rows near it (a card's own rows first for a card payment), you tick the ones it paid, and Apply
