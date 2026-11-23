@@ -38,7 +38,7 @@ lock:               ## re-pin the runtime dependencies and the build backend wit
 
 IMAGE ?= hearthfund:latest
 PLATFORMS ?= linux/amd64,linux/arm64
-PREVIOUS_REF ?= v1.1.0
+PREVIOUS_REF ?= v1.2.0
 
 image:              ## build the Docker image for this machine (loaded into the local image store)
 	docker buildx build --load -t $(IMAGE) .
