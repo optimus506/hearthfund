@@ -9,6 +9,8 @@ tracker; those issues are not public, and the public tracker numbers its issues 
 
 ## Unreleased
 
+## 1.2.0 - 2026-11-23
+
 ### Changed
 - **Skipped rows no longer pile up on Bills.** A row marked **Won’t be paid** (or **Won’t come in**) leaves the
   list; it stays in view only on the visit you skipped it, so Undo is at hand. **Show removed rows** lists every
