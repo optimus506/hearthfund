@@ -2,7 +2,8 @@ from dataclasses import replace
 
 from recon_fixture import export, household
 
-from factories import D, budget, chain, row, rule
+from factories import D, Weekend, budget, chain, row, rule, schedule, series
+from hbudget.core.ledger import generate
 from hbudget.core.models import Direction, RowState
 from hbudget.core.reconcile import AutoMatch, Tracked, match, prepare
 
@@ -70,7 +71,46 @@ def test_pay_whatever_amount_and_no_candidate():
     rules = (rule('pay', 'pay', ('PAYROLL',), targets=('pay',)),)
     r = mini(rows, rules, [('x', D(2029, 3, 14), 150000, 'PAYROLL'), ('y', D(2029, 3, 15), 150000, 'PAYROLL')])
     assert r.auto == (AutoMatch('x', 'p', 'pay'),)
-    assert r.unknown[0].reason == 'no open pay row near this date'
+    assert r.unknown[0].reason == ('no open pay row near this date; nearest row p (due 3/15) was taken by another '
+                                   'bank line in this upload')
+
+
+def test_weekend_payday_matches_the_friday_deposit():
+    # a Saturday payday moved to the Friday before; the deposit posts that Friday
+    sat = D(2029, 4, 21)
+    assert sat.weekday() == 5
+    pay = series('pay-a', 'income', 300000, schedule('semimonthly', D(2029, 1, 1), days=(7, 21),
+                 weekend=Weekend.BEFORE), name='Pay A')
+    b = generate(budget(as_of=D(2029, 4, 1), series=(pay,),
+                        rules=(rule('payroll', 'pay', ('PAYROLL',), targets=('pay-a',)),)), D(2029, 5, 31))
+    b = replace(b, rows=tuple(replace(r, state=RowState.CLEARED) if r.nominal_date == D(2029, 4, 7) else r
+                              for r in b.rows))
+    row21 = next(r for r in b.rows if r.nominal_date == sat)
+    assert row21.due_date == D(2029, 4, 20)
+    r = match(b, prepare(chain(100000, [('x', D(2029, 4, 20), 299000, 'PAYROLL')]), b))
+    assert r.auto == (AutoMatch('x', row21.id, 'payroll'),) and not r.unknown
+
+
+def test_an_unmatched_line_says_why_the_nearest_row_was_left_out():
+    pay = (rule('pay', 'pay', ('PAYROLL',), targets=('pay',)),)
+    done = (row('p', 'Pay', -200000, D(2029, 3, 15), series_id='pay', state=RowState.CLEARED),)
+    assert mini(done, pay, [('x', D(2029, 3, 14), 200000, 'PAYROLL')]).unknown[0].reason.endswith(
+        'nearest row p (due 3/15) is cleared')
+    far = (row('p', 'Pay', -200000, D(2029, 4, 30), series_id='pay'),)
+    assert mini(far, pay, [('x', D(2029, 3, 14), 200000, 'PAYROLL')]).unknown[0].reason.endswith(
+        'nearest row p (due 4/30) is 47 days after the posting; the window is 12 days before to 21 after')
+    loose = (row('p', 'Pay', -200000, D(2029, 3, 15)),)          # named like the item, but not linked to it
+    b = budget(start=100000, as_of=D(2029, 2, 28), rows=loose, rules=pay,
+               series=(series('pay', 'income', -200000, schedule('monthly', D(2030, 1, 1), day=15), name='Pay'),))
+    got = match(b, prepare(chain(100000, [('x', D(2029, 3, 14), 200000, 'PAYROLL')]), b)).unknown[0].reason
+    assert got.endswith('row p has the name but is not linked to the item the rule names')
+    # the live case: the item has linked rows too (an older one cleared), the one in the window is the loose one
+    b2 = replace(b, rows=(*loose, row('p0', 'Pay', -200000, D(2029, 2, 15), series_id='pay', state=RowState.CLEARED)))
+    got = match(b2, prepare(chain(100000, [('x', D(2029, 3, 14), 200000, 'PAYROLL')]), b2)).unknown[0].reason
+    assert got.endswith('row p has the name but is not linked to the item the rule names')
+    bill = (rule('gym', 'bill', ('GYM',), targets=('gym',)),)
+    assert mini((), bill, [('x', D(2029, 3, 14), -4500, 'GYM')]).unknown[0].reason.endswith(
+        'the rule names no item or row that has rows')
 
 
 def test_card_greedy_stop_rule():

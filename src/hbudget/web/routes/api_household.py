@@ -377,9 +377,9 @@ def post_checkin(body: CheckinBody, m: Contributor) -> dict[str, Any]:
 
 
 @router.get('/ledger')
-def get_ledger(m: Viewer, start: date | None = None, end: date | None = None) -> dict[str, Any]:
+def get_ledger(m: Viewer, start: date | None = None, end: date | None = None, removed: bool = False) -> dict[str, Any]:
     b = load(m)
-    return views.ledger(b, fc.compute(b, today=m.today), today=m.today, start=start, end=end)
+    return views.ledger(b, fc.compute(b, today=m.today), today=m.today, start=start, end=end, removed=removed)
 
 
 @router.get('/calendar')

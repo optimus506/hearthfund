@@ -3,8 +3,16 @@ from dataclasses import replace
 import pytest
 
 from factories import D, budget, row, schedule, series
-from hbudget.core.ledger import generate, horizon_end, parse_months, regenerate_series, remove_row, set_month_amounts
-from hbudget.core.models import Horizon, Kind, RowState, Status, Weekend
+from hbudget.core.ledger import (
+    adopt_rows,
+    generate,
+    horizon_end,
+    parse_months,
+    regenerate_series,
+    remove_row,
+    set_month_amounts,
+)
+from hbudget.core.models import Horizon, Kind, LedgerRow, RowState, Status, Weekend
 
 
 def dues(b, sid=None):
@@ -200,3 +208,18 @@ def test_regenerate_series_gives_hand_edited_rows_the_new_card_and_name():
     out = {r.id: r for r in regenerate_series(b, 'grocery', D(2029, 3, 1)).rows}
     assert (out[first.id].amount, out[first.id].card, out[first.id].name) == (25000, None, 'Groceries')
     assert all(r.card is None and r.amount == 21000 for r in out.values() if r.id != first.id)
+
+
+def test_an_item_that_comes_back_takes_back_the_rows_it_left_behind():
+    # deleted with a hand-edited future row kept as a one-off, then merged back from a bill file with the same id
+    pay = series('pay', 'income', 200000, schedule('monthly', D(2029, 3, 1), day=21))
+    kept = LedgerRow(id='pay:2029-03-21', series_id=None, name='Pay', kind=Kind.INCOME, amount=-190000,
+                     due_date=D(2029, 3, 21), order_date=D(2029, 3, 21), seq=0, nominal_date=D(2029, 3, 21),
+                     overridden=True)
+    other = replace(kept, id='pay:2029-03-22')                    # its id is not its own occurrence: left alone
+    b = generate(budget(series=(pay,), rows=(kept, other), horizon=Horizon('fixed', end=D(2029, 4, 30))),
+                 D(2029, 4, 30))
+    got = {r.id: (r.series_id, r.amount) for r in b.rows}
+    assert got == {'pay:2029-03-21': ('pay', -190000), 'pay:2029-03-22': (None, -190000),
+                   'pay:2029-04-21': ('pay', -200000)}
+    assert adopt_rows(b) is b                                     # nothing left to link: unchanged

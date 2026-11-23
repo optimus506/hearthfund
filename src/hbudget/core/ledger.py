@@ -12,8 +12,8 @@ from .money import Cents
 from .recurrence import Occurrence, amount_for, occurrences
 
 __all__ = [
-    'RowChange', 'add_row', 'change_amount', 'clear_row', 'generate', 'horizon_end', 'mark_done', 'mark_status',
-    'move_row', 'order_key', 'ordered', 'parse_months', 'reduce_row', 'regenerate_series', 'remove_row',
+    'RowChange', 'add_row', 'adopt_rows', 'change_amount', 'clear_row', 'generate', 'horizon_end', 'mark_done',
+    'mark_status', 'move_row', 'order_key', 'ordered', 'parse_months', 'reduce_row', 'regenerate_series', 'remove_row',
     'set_month_amounts', 'undo_change',
 ]
 
@@ -123,8 +123,29 @@ def _build_rows(budget: Budget, existing: Sequence[LedgerRow],
     return out
 
 
+def adopt_rows(budget: Budget) -> Budget:
+    """Rows an item left behind when it was deleted (kept as one-off rows because they were edited by hand or
+    cleared) go back to it when an item with the same id comes back, as a bill-file merge can bring it. Their id is
+    "<item id>:<occurrence>", so generate() never makes those dates again; unlinked, payee rules that name the item
+    would never see them. Amounts and dates are kept."""
+    by_id = budget.series_by_id()
+    changed = False
+    rows = []
+    for r in budget.rows:
+        if r.series_id is None and r.nominal_date is not None:
+            sid, _, day = r.id.rpartition(':')
+            s = by_id.get(sid)
+            if s is not None and s.kind is r.kind and day == r.nominal_date.isoformat():
+                r = replace(r, series_id=sid)
+                changed = True
+        rows.append(r)
+    return replace(budget, rows=tuple(rows)) if changed else budget
+
+
 def generate(budget: Budget, until: date) -> Budget:
-    """Add rows for every active series after its watermark, up to `until`. Rows are never deleted."""
+    """Add rows for every active series after its watermark, up to `until`. Rows are never deleted. Rows an item
+    with the same id left behind are linked to it again first (adopt_rows)."""
+    budget = adopt_rows(budget)
     have = {(r.series_id, _occurrence_of(r)) for r in budget.rows if r.series_id}
     ids = {r.id for r in budget.rows}
     wanted: list[tuple[Series, Occurrence]] = []
