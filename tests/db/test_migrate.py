@@ -29,9 +29,9 @@ def test_available_is_numbered_without_gaps() -> None:
 def test_from_empty_and_idempotent(db_file: Path) -> None:
     c = connection.open(db_file)
     assert migrate.current_version(c) == 0
-    assert migrate.migrate(c, db_file, now=NOW) == list(range(1, 22))
-    assert migrate.current_version(c) == 21
-    assert migrate.applied(c) == list(range(1, 22))
+    assert migrate.migrate(c, db_file, now=NOW) == list(range(1, 23))
+    assert migrate.current_version(c) == 22
+    assert migrate.applied(c) == list(range(1, 23))
     assert {'users', 'households', 'ledger_rows', 'upload_txns', 'audit_log', 'schema_migrations'} <= _tables(c)
     assert migrate.migrate(c, db_file) == []
     assert not (db_file.parent / 'backups').exists()        # an empty database needs no backup
@@ -60,7 +60,7 @@ def test_step_by_step_upgrade_keeps_data_and_backs_up(db_file: Path, monkeypatch
     c.execute("INSERT INTO audit_log (household_id, at, user_id, action) VALUES (1, 'x', 1, 'old.entry')")
     c.commit()
     monkeypatch.setattr(migrate, 'available', lambda: every)
-    assert migrate.migrate(c, db_file, now=NOW) == list(range(2, 22))
+    assert migrate.migrate(c, db_file, now=NOW) == list(range(2, 23))
     assert c.execute('SELECT name, version FROM households').fetchone()[:] == ('H', 0)
     assert c.execute('SELECT username FROM users').fetchone()[0] == 'u'
     assert c.execute('SELECT name, amount FROM ledger_rows').fetchone()[:] == ('Rent', 90000)
@@ -107,7 +107,7 @@ def test_gap_in_numbering_is_refused(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
 def test_memory_database_and_private_umask(tmp_path: Path) -> None:
     c = connection.open(':memory:')
-    assert migrate.migrate(c, ':memory:') == list(range(1, 22))
+    assert migrate.migrate(c, ':memory:') == list(range(1, 23))
     c.close()
     assert connection.db_path(tmp_path) == tmp_path / 'hbudget.db'
     with connection.private_umask():
@@ -149,7 +149,7 @@ def test_backup_to_copies_the_live_database(conn: sqlite3.Connection, tmp_path: 
 def test_applied_does_not_commit_the_callers_transaction(conn: sqlite3.Connection) -> None:
     conn.execute('BEGIN')
     conn.execute("INSERT INTO app_settings VALUES ('pending', '1')")
-    assert migrate.applied(conn) == list(range(1, 22))
+    assert migrate.applied(conn) == list(range(1, 23))
     conn.rollback()
     assert conn.execute("SELECT 1 FROM app_settings WHERE key = 'pending'").fetchone() is None
 
@@ -169,7 +169,7 @@ def test_0004_back_fills_the_per_upload_values(db_file: Path, monkeypatch: pytes
     c.execute("INSERT INTO upload_txns (household_id, upload_id, txn_id, file_index) VALUES (1, 'u1', 't1', 0)")
     c.commit()
     monkeypatch.setattr(migrate, 'available', lambda: every)
-    assert migrate.migrate(c, db_file, now=NOW) == [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+    assert migrate.migrate(c, db_file, now=NOW) == list(range(4, 23))
     assert repo.upload_txns(c, 1, 'u1') == [BankTxn(id='t1', posted=date(2029, 1, 2), amount=-5000,
                                                     description='SHOP', balance=95000, category='Shopping')]
     c.close()
@@ -197,7 +197,7 @@ def test_0009_gives_open_series_rows_the_series_card(db_file: Path, monkeypatch:
     monkeypatch.setitem(repo._TABLES, 'series', (keys, cols))
     c.commit()
     monkeypatch.setattr(migrate, 'available', lambda: every)
-    assert migrate.migrate(c, db_file, now=NOW) == [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21]
+    assert migrate.migrate(c, db_file, now=NOW) == [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21, 22]
     cards = {r.id: r.card for r in repo.load_budget(c, hid).rows}
     assert cards == {'a': 'bluecard', 'b': 'bluecard', 'c': None, 'd': None}
     c.close()
@@ -219,7 +219,7 @@ def test_0015_keeps_the_dates_of_items_with_a_leftover_every_n(db_file: Path, mo
     repo.save_budget(c, hid, budget(series=items), user_id=None, action='test')
     c.commit()
     monkeypatch.setattr(migrate, 'available', lambda: every)
-    assert migrate.migrate(c, db_file, now=NOW) == [15, 16, 17, 18, 20, 21]
+    assert migrate.migrate(c, db_file, now=NOW) == [15, 16, 17, 18, 20, 21, 22]
     assert {s.id: s.schedule.interval for s in repo.load_budget(c, hid).series} == {
         'rent': 1, 'gift': 1, 'pool': 3, 'water': 1}
     c.close()
@@ -255,3 +255,29 @@ def test_the_app_refuses_to_start_on_a_newer_database(tmp_path: Path, monkeypatc
     monkeypatch.setattr(migrate, 'available', lambda: every[:-1])
     with pytest.raises(migrate.NewerDatabase, match='newer version of the app'):
         create_app(Settings(data_dir=tmp_path))
+
+
+def test_0022_links_left_behind_rows_to_the_item_that_came_back(db_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from factories import D, budget, row, series
+    from hbudget.core.models import Cadence, Schedule
+    from hbudget.db import repo
+    every = migrate.available()
+    monkeypatch.setattr(migrate, 'available', lambda: every[:21])                 # a database from before 0022
+    c = connection.open(db_file)
+    migrate.migrate(c, db_file, now=NOW)
+    hid = repo.create_household(c, 'H', as_of=D(2029, 3, 1))
+    pay = series('pay', 'income', 200000, Schedule(Cadence('monthly'), D(2029, 3, 1), day=21))
+    left = dict(nominal_date=D(2029, 3, 21), overridden=True)
+    rows = (row('pay:2029-03-21', 'Pay', -190000, D(2029, 3, 20), kind='income', **left),     # left behind: linked
+            row('pay:2029-03-22', 'Pay', -190000, D(2029, 3, 20), kind='income', **left),     # id is not its date
+            row('pay:2029-03-21x', 'Pay', -1, D(2029, 3, 21), kind='bill', nominal_date=D(2029, 3, 21)),
+            row('gone:2029-03-21', 'Old', -5, D(2029, 3, 21), kind='income', nominal_date=D(2029, 3, 21)),
+            row('one-off', 'Gift', 5000, D(2029, 3, 9)))
+    repo.save_budget(c, hid, budget(series=(pay,), rows=rows), user_id=None, action='test')
+    c.commit()
+    monkeypatch.setattr(migrate, 'available', lambda: every)
+    assert migrate.migrate(c, db_file, now=NOW) == [22]
+    got = {r.id: (r.series_id, r.amount) for r in repo.load_budget(c, hid).rows}
+    assert got == {'pay:2029-03-21': ('pay', -190000), 'pay:2029-03-22': (None, -190000),
+                   'pay:2029-03-21x': (None, -1), 'gone:2029-03-21': (None, -5), 'one-off': (None, 5000)}
+    c.close()

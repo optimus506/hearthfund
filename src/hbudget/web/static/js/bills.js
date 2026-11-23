@@ -6,8 +6,9 @@ import { lineChart } from './chart.js';
 // editVal: what is typed in the open change editor, so a re-render (a phone keyboard opening resizes the window,
 // a status mark reloads the list) does not lose it; cleared whenever the editor closes
 // open: rows showing their status choice and Change (compact rows, #100); spend: grouped spending lines opened
+// showRemoved: list every "won't be paid" row; justRemoved: rows skipped on this visit, kept in view for Undo
 const state = { data: null, expected: [], weeks: 8, editing: null, editVal: null, focusEdit: false, q: '', picked: new Set(),
-  open: new Set(), spend: new Set() };
+  open: new Set(), spend: new Set(), showRemoved: false, justRemoved: new Set() };
 const STATUS_TEXT = { none: 'Not yet', manual: 'Scheduled', autopay: 'Autopay' };
 // an item marked "nothing to schedule" (D-104): its rows do not ask to be scheduled
 const statusText = (r) => (r.no_schedule && r.status === 'none' ? 'Nothing to do' : STATUS_TEXT[r.status] || r.status);
@@ -31,6 +32,7 @@ async function mark(r, status) {
 async function rowAction(r, action, body, btn) {
   try {
     await busy(btn, () => api('POST', '/rows/' + encodeURIComponent(r.id) + '/' + action, body || { expected_amount: r.amount }));
+    if (action === 'remove') state.justRemoved.add(r.id);
     closeEditor(); state.open.delete(r.id); await load();
   } catch (e) {
     say(btn && btn.closest('.editrow') ? btn : msg, e.message, 'err');
@@ -139,6 +141,7 @@ async function bulk(action, extra, btn) {
   const rows = state.data.rows.filter((r) => state.picked.has(r.id)).map((r) => ({ id: r.id, expected_amount: r.amount }));
   try {
     const out = await busy(btn, () => api('POST', '/rows/bulk', { rows, action, ...extra }));
+    if (action === 'remove') for (const r of rows) state.justRemoved.add(r.id);
     state.picked.clear(); closeEditor(); await load();
     say(msg, out.rows + (out.rows === 1 ? ' row' : ' rows') + ' updated.', 'ok');
   } catch (e) { say(msg, e.message, 'err'); if (e.status === 409 || e.status === 404) await load(); }
@@ -160,7 +163,8 @@ function renderList() {
   if (!d.rows.length) { box.append(el('div', { class: 'empty', text: 'No bills yet. Add pay and bills on Bills > Bill setup, or import a bill file.' })); }
   const today = new Date(d.today + 'T00:00');   // the server's "today": never before the budget's as-of date
   const horizon = new Date(today.getTime() + state.weeks * 7 * DAY);
-  const gs = groups(d.rows);
+  // removed rows stay out of the list unless asked for, or skipped on this visit (so Undo is at hand)
+  const gs = groups(d.rows.filter((r) => r.state !== 'removed' || state.showRemoved || state.justRemoved.has(r.id)));
   const pays = gs.filter((g) => g.pay).map((g) => g.pay.order);
   let hidden = 0;
   for (const g of gs) {
@@ -217,6 +221,10 @@ function renderList() {
     box.append(card);
   }
   $('more').hidden = hidden === 0;
+  const n = d.removed_total || 0;
+  $('removedToggle').hidden = n === 0 && !state.showRemoved;
+  $('removedToggle').textContent = state.showRemoved ? 'Hide removed rows' : 'Show removed rows (' + n + ')';
+  $('removedToggle').setAttribute('aria-pressed', String(state.showRemoved));
 }
 
 function toggle(set, key) { if (set.has(key)) set.delete(key); else set.add(key); }
@@ -284,13 +292,14 @@ function renderAutopay() {
 }
 
 async function load() {
-  const [d, ex] = await Promise.all([api('GET', '/ledger'), api('GET', '/expected')]);
+  const [d, ex] = await Promise.all([api('GET', '/ledger' + (state.showRemoved ? '?removed=1' : '')), api('GET', '/expected')]);
   state.data = d; state.expected = ex.items;
   render();
   loadSummary();
 }
 
 $('more').addEventListener('click', () => { state.weeks += 4; renderList(); });
+$('removedToggle').addEventListener('click', () => { state.showRemoved = !state.showRemoved; load().catch((e) => say(msg, e.message, 'err')); });
 window.addEventListener('themechange', () => state.data && renderChart());
 // only the chart depends on the width; redrawing the list would close the phone keyboard mid-typing
 let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => state.data && renderChart(), 150); });

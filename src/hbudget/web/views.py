@@ -125,26 +125,33 @@ def row(r: LedgerRow, by_id: dict[str, Series], balance: int | None, *, today: d
             'no_schedule': s is not None and s.no_schedule}
 
 
-def ledger(budget: Budget, f: Forecast, *, today: date, start: date | None = None, end: date | None = None) -> J:
+def ledger(budget: Budget, f: Forecast, *, today: date, start: date | None = None, end: date | None = None,
+           removed: bool = False) -> J:
     """Open and removed rows in ledger order with the balance after each (removed rows carry the running balance).
     Rows marked already paid by hand since the last reconciliation are listed too, like removed ones, so they can be
-    undone; rows cleared against a bank posting are not."""
+    undone; rows cleared against a bank posting are not. Removed rows dated on or before the last reconciliation
+    are left out unless `removed` asks for every removed row; `removed_total` counts them all."""
     by_id = budget.series_by_id()
     bal = {p.row_id: p.balance for p in f.points if p.row_id}
     running = budget.start_balance
     since = budget.last_reconciled_through
     rows = []
+    removed_total = 0
     for r in ordered(budget.rows):
         if r.state is RowState.CLEARED and (r.cleared_txn_id is not None or r.cleared_on is None
                                             or (since is not None and r.cleared_on < since)):
             continue
+        if r.state is RowState.REMOVED:
+            removed_total += 1
+            if not removed and since is not None and r.due_date <= since:
+                continue
         if r.state is RowState.OPEN:
             running = bal.get(r.id, running)
         if (start and r.order_date < start) or (end and r.order_date > end):
             continue
         rows.append(row(r, by_id, running, today=today))
-    return {'rows': rows, 'start': budget.start_balance, 'today': today.isoformat(), 'low': f.low,
-            'cushion': budget.settings.alerts.cushion, 'chart': chart(f), 'cards': card_names(budget),
+    return {'rows': rows, 'removed_total': removed_total, 'start': budget.start_balance, 'today': today.isoformat(),
+            'low': f.low, 'cushion': budget.settings.alerts.cushion, 'chart': chart(f), 'cards': card_names(budget),
             'series': [{'id': s.id, 'name': s.name, 'kind': str(s.kind), 'status': str(s.status), 'notes': s.notes}
                        for s in budget.series],
             'labels': list(label_rules.in_use(budget.series, budget.rows))}

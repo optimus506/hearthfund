@@ -116,24 +116,41 @@ def test_browser_smoke(server: tuple[str, Path]) -> None:
         page.click('text=Budget, next 12 months')
         page.wait_for_selector('#flow svg')
 
-        # reconcile: upload, dry run, accept both proposals, apply
+        # reconcile: upload, dry run, accept both proposals, apply. The review opens in its own window (a modal
+        # dialog) with its own address; Esc, Close and Back close it and change nothing
         page.goto(h + '/reconcile')
         page.set_input_files('#upFile', str(FIX / 'bank.csv'))
         page.click('#upForm button[type=submit]')
-        page.wait_for_selector('#preview h2:has-text("Dry run")')
-        # the dry run is brought into view with focus on its heading
-        page.wait_for_function("document.activeElement === document.querySelector('#preview h2')")
-        # ?upload=<id> (the link after a bank sync) opens that upload's dry run; an id that is gone says so
+        page.wait_for_selector('#recDialog[open] #preview >> text=Starting point')
+        assert page.inner_text('#recTitle') == 'Dry run' and '#reconcile/' in page.url
+        page.wait_for_function("document.activeElement === document.getElementById('recTitle')")
+        page.keyboard.press('Escape')
+        page.wait_for_selector('#recDialog', state='hidden')
+        page.wait_for_function("() => !location.hash.startsWith('#reconcile/')")
+        page.wait_for_function("document.activeElement === document.querySelector('#upForm button[type=submit]')")
+        page.click('#uploads button:has-text("Review")')
+        page.wait_for_selector('#recDialog[open] #preview >> text=Starting point')
+        page.go_back()                                                   # Back closes it, the page stays
+        page.wait_for_selector('#recDialog', state='hidden')
+        assert page.url.endswith('/reconcile')
+        # Home's check-in opens the same window over Home
+        page.goto(h)
+        page.click('#checkSteps button:has-text("Review the matches")')
+        page.wait_for_selector('#recDialog[open] #preview >> text=Starting point')
+        page.click('#recDialog .sheet-head button:has-text("Close")')
+        page.wait_for_selector('#recDialog', state='hidden')
+        page.wait_for_function("() => !location.hash.startsWith('#reconcile/')")
+        # ?upload=<id> (an older link after a bank sync) opens that upload's review; an id that is gone says so
         page.goto(h + '/reconcile?upload=nope')
         page.wait_for_selector('#msg >> text=not on this list any more')
-        assert page.is_hidden('#preview')
+        assert page.locator('#recDialog[open]').count() == 0
         up_id = page.evaluate("fetch('/api' + location.pathname.replace('/reconcile', '/uploads'))"
                               ".then((r) => r.json()).then((d) => d.uploads.find((u) => u.status === 'waiting').id)")
         page.goto(h + '/reconcile?upload=' + up_id)
-        page.wait_for_selector('#preview h2:has-text("Dry run")')
-        page.wait_for_function("document.activeElement === document.querySelector('#preview h2')")
-        assert 'upload=' not in page.url
-        assert page.evaluate("document.querySelector('#preview').getBoundingClientRect().top < innerHeight")
+        page.wait_for_selector('#recDialog[open] #preview >> text=Starting point')
+        assert 'upload=' not in page.url and page.url.endswith('#reconcile/' + up_id)
+        page.reload()                                                    # the address reopens it
+        page.wait_for_selector('#recDialog[open] #preview >> text=Starting point')
         text = page.inner_text('#preview')
         assert 'null' not in text and 'P1' in text and 'P2' in text
         page.select_option('#acc-P1', 'clear')
@@ -160,8 +177,9 @@ def test_browser_smoke(server: tuple[str, Path]) -> None:
         shop.locator('text=Lawn care stays open with $15.00 left').wait_for()
         assert page.locator('.item:has(#acc-P2) select').first.is_enabled()
         page.click('#preview button:has-text("Apply")')
-        page.wait_for_selector('#preview h2:has-text("Applied")')
-        page.wait_for_function("document.activeElement === document.querySelector('#preview h2')")
+        page.wait_for_selector('#recTitle:has-text("Applied")')
+        page.wait_for_function("document.activeElement === document.getElementById('recTitle')")
+        assert page.is_visible('#preview a:has-text("Go to Bills")')
         report = page.inner_text('#preview')
         # 620.00, not 595.00: the 25.00 the shop line paid is no longer counted a second time on Lawn care
         assert '$620.00 on 03/14/2029' in report
@@ -182,6 +200,9 @@ def test_browser_smoke(server: tuple[str, Path]) -> None:
         page.select_option('#upKind', 'bank')
         page.set_input_files('#upFile', str(extra))
         page.click('#upForm button[type=submit]')
+        page.wait_for_selector('#recDialog[open] #preview .msg.err')       # its review says why it cannot run yet
+        page.click('#recDialog .sheet-head button:has-text("Close")')
+        page.wait_for_selector('#recDialog', state='hidden')
         page.wait_for_selector('#uploads .item:has-text("extra.csv") button:has-text("Delete with postings")')
         page.click('#uploads .item:has-text("extra.csv") button:has-text("Delete with postings")')
         page.wait_for_selector('#uploads .confirm >> text=This removes 1 posting')
@@ -238,6 +259,14 @@ def test_browser_smoke(server: tuple[str, Path]) -> None:
         page.locator('#groups button:has-text("Won’t be paid")').click()
         page.wait_for_selector('#groups .bill.removed')
         page.wait_for_function('s => document.getElementById("strip").innerText !== s', arg=strip0)
+        # A removed row stays in view on this visit only; after a reload it waits behind "Show removed rows"
+        assert page.inner_text('#removedToggle') == 'Show removed rows (1)'
+        page.goto(h + '/bills')
+        page.wait_for_selector('#removedToggle:not([hidden])')
+        assert page.locator('#groups .bill.removed').count() == 0
+        page.click('#removedToggle')
+        page.wait_for_selector('#groups .bill.removed')
+        assert page.inner_text('#removedToggle') == 'Hide removed rows'
         open_row('#groups .bill.compact.removed')
         page.locator('#groups .bill.more button:has-text("Undo")').click()
         page.wait_for_function('s => document.getElementById("strip").innerText === s', arg=strip0)

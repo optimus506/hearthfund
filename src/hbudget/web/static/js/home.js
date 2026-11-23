@@ -4,6 +4,7 @@ import { api, $, el, money, fmtD, page, can, say, busy, labelChips } from './api
 import { renderSummary } from './summary.js';
 import { lineChart } from './chart.js';
 import { goalBar, goalLine } from './goalbits.js';
+import { openReview, reviewFromAddress } from './review.js';
 
 let data = null;
 
@@ -115,7 +116,8 @@ async function renderCheckin() {
       el('button', { class: 'btn primary', type: 'button', text: 'Bring them in', onclick: (ev) => syncBank(ev.currentTarget) }))
     : w
     ? step(1, 'Confirm the bank matches', false, ...plaidBad, el('p', { class: 'small', text: 'A bank file is waiting' + (w.date_to ? ' (through ' + fmtD(w.date_to) + ')' : '') + '.' }),
-      el('a', { class: 'btn', href: h + 'reconcile?checkin=1', text: 'Review the matches' }))
+      can('editor') ? el('button', { class: 'btn primary', type: 'button', text: 'Review the matches', onclick: (ev) => review(w.id, ev.currentTarget) })
+        : el('a', { class: 'btn', href: h + 'reconcile?checkin=1', text: 'Review the matches' }))
     : step(1, c.plaid ? 'Bring in this week\'s bank transactions' : 'Bring in this week\'s bank file', !!c.bank.reconciled_through && c.done_this_week,
       ...plaidBad, el('p', { class: 'small muted', text: c.bank.reconciled_through ? 'Reconciled through ' + fmtD(c.bank.reconciled_through) + '.' : 'Nothing reconciled yet.' }),
       el('span', { class: 'row-actions' },
@@ -147,12 +149,20 @@ async function renderCheckin() {
   btn.hidden = !can('contributor');
   btn.textContent = c.done_this_week ? 'Check in again' : 'Done for this week';
 }
+// the reconcile review opens in its own window over Home; Apply reloads Home under it
+const review = (id, from) => openReview(id, { from, onChange: load });
+if (can('editor')) reviewFromAddress({ onChange: load });
 // a bank linked through Plaid (docs/PLAID.md): the sync becomes a waiting bank upload, reviewed like a file
 async function syncBank(btn, refresh) {
   try {
     const r = await busy(btn, () => api('POST', refresh ? '/plaid/refresh' : '/plaid/sync', {}), refresh ? 'Asking the bank…' : 'Syncing…');
     const bad = r.problems.map((p) => (p.institution || 'Bank') + ': ' + p.message + (p.relink ? ' (sign in again on the Bank connection page)' : ''));
-    if (r.bank || r.cards.length) { await renderCheckin(); if (!r.bank) say($('checkSteps'), 'New card purchases are on the Card page.', 'ok'); return; }
+    if (r.bank || r.cards.length) {
+      await renderCheckin();
+      if (r.bank) await review(r.bank.id, document.querySelector('#checkSteps .btn.primary'));   // the review opens on its own
+      else say($('checkSteps'), 'New card purchases are on the Card page.', 'ok');
+      return;
+    }
     for (const n of r.refresh_notes || []) bad.push((n.institution || 'Bank') + ': ' + n.message);
     const text = bad.length ? bad.join(' ') : r.not_ready ? 'Plaid is still fetching your history; try again in a few minutes.'
       : 'Nothing new from the bank' + (r.pending ? ' (' + r.pending + ' pending until they post)' : '') + '.'

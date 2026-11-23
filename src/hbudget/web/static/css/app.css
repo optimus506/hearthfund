@@ -228,6 +228,21 @@ td.r small.sub { margin-left: auto; } td.neg small.sub { color: inherit; }
 .pickslot { margin-top: 6px; } .picklist { display: grid; gap: 2px; margin: 6px 0; }
 .picklist label { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 32px; }
 .picker .bad, #recApplyNote { color: var(--bad); font-weight: 600; } #recApplyNote:empty { display: none; }
+/* the reconcile review in its own window (review.js): centred on a wide screen, full screen on a phone; it scrolls
+   inside, the page under it stays put */
+.sheet { width: min(880px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); padding: 0; overflow: auto;
+  overscroll-behavior: contain; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+  color: var(--ink); }
+.sheet::backdrop { background: rgb(0 0 0 / .5); }
+.sheet-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--line); }
+.sheet-head h2 { margin: 0; outline: none; }
+.sheet-body { padding: 4px 14px 14px; } .sheet-body h3 { margin: 16px 0 6px; }
+html.sheet-open { overflow: hidden; }
+@media (max-width: 620px) {
+  .sheet { width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; border: 0; border-radius: 0; }
+  .sheet-head { padding-top: calc(10px + env(safe-area-inset-top)); }
+}
 .item > .confirm { flex: 1 1 100%; border-left: 3px solid var(--bad); padding: 6px 10px; display: grid; gap: 6px; }
 .formmsg { margin-top: -4px; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

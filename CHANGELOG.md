@@ -9,6 +9,32 @@ tracker; those issues are not public, and the public tracker numbers its issues 
 
 ## Unreleased
 
+### Changed
+- **Skipped rows no longer pile up on Bills.** A row marked **Won’t be paid** (or **Won’t come in**) leaves the
+  list; it stays in view only on the visit you skipped it, so Undo is at hand. **Show removed rows** lists every
+  skipped row, past and future, each with Undo. `GET /ledger` leaves out removed rows dated on or before the last
+  reconciliation unless asked with `?removed=1`, and gives `removed_total`. The forecast is unchanged: removed rows
+  never counted.
+- **The reconcile review opens in its own window.** After a bank file upload or a bank sync, the dry run opens in
+  a window over the page (full screen on a phone, scrolling inside) instead of further down Money > Uploads, so the
+  page under it stays where it was. **Review** on a waiting upload, **Review the matches** on Home and **Review it
+  now** on Bank connection open it too. It holds the same review and Apply; Esc, Close or Back close it and change
+  nothing. After Apply it shows the result with a link to Bills. Its address is `#reconcile/<upload id>`, so a
+  reload opens it again.
+- **An unmatched pay or bill line says why.** "No open ... row near this date" now names the nearest row of that
+  item and what kept it out: not open, taken by another bank line in the same upload, outside the date window, or
+  named like the item but not linked to it. It is kept in the reconciliation's record, so a miss can be explained
+  later.
+
+### Fixed
+- **Bank lines match rows an item left behind.** When an item is deleted, its rows that were edited by hand stay as
+  one-off rows. If the item then comes back with the same id (a bill-file merge can do that), it now takes those
+  rows back, with their amounts and dates. Before, they stayed unlinked, the item never made rows for those dates,
+  and payee rules that name the item never matched them: a paycheck could count twice.
+
+### Upgrade notes
+- Migration 0022 links rows like these to their item again. It changes no amounts or dates.
+
 ## 1.1.0 - 2026-11-19
 
 ### Added

@@ -1,6 +1,7 @@
 // Bank connection (docs/PLAID.md): turn Plaid on or off for the household, link a bank through Plaid Link, choose
 // what each account is for, sync. Also finishes Link when an OAuth bank sends the browser back to /plaid/oauth.
 import { $, api, arm, busy, can, el, fmtD, money, page, say } from './api.js';
+import { openReview } from './review.js';
 
 const KEY = 'hb-plaid-link';     // sessionStorage: the Link token and household while the bank's site is open
 const ROLE_TEXT = { bank: 'Checking: reconcile with the budget', card: 'Card: add to the Card page', invest: 'Investment: keep its balance on Money > Investments', ignore: 'Not used' };
@@ -202,8 +203,12 @@ async function render() {
         const r = await busy(b, () => api('POST', path, {}), working);
         await render();
         say($('msg'), syncResult(r) + (r.bank ? ' A bank upload is waiting for review.' : ''), r.problems.length ? 'err' : 'ok');
-        // straight to that upload's dry run on Money > Uploads (the check-in reviews it too)
-        if (r.bank) $('msg').append(' ', el('a', { id: 'connReview', href: '/h/' + encodeURIComponent(page.hid) + '/reconcile?upload=' + encodeURIComponent(r.bank.id), text: 'Review it now' }));
+        // the upload's review opens in its own window; "Review it now" opens it again after a Close
+        if (r.bank) {
+          const id = r.bank.id;
+          $('msg').append(' ', el('button', { id: 'connReview', class: 'btn small', type: 'button', text: 'Review it now', onclick: (ev) => openReview(id, { from: ev.currentTarget, onChange: render }) }));
+          await openReview(id, { from: $('connReview'), onChange: render });
+        }
       } catch (e) { say(b, e.message, 'err'); }
     };
     actions.append(el('button', { class: 'btn primary', type: 'button', text: 'Sync now', onclick: run('/plaid/sync', 'Syncing…') }));

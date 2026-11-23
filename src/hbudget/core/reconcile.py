@@ -181,6 +181,35 @@ def _month_end(d: date) -> date:
     return nxt - timedelta(days=1)
 
 
+def _why_not(budget: Budget, targets: Sequence[str], t: BankTxn, claimed: set[str]) -> str:
+    """Why no row of these targets was matched to the bank line: the nearest row of the targets and what kept it
+    out (not open, taken by another bank line in this upload, outside the date window), so a miss can be
+    explained from the reconciliation's own record."""
+    s = budget.settings.reconcile
+    by_id = budget.series_by_id()
+    mine = [r for r in budget.rows if r.name in targets or r.series_id in targets]
+    names = {by_id[x].name for x in targets if x in by_id}
+    # an open row named like the item but not linked to it, in the window: the likeliest reason, so it comes first
+    loose = [r for r in budget.rows if r.name in names and r.state is RowState.OPEN and r not in mine
+             and (not mine or -s.days_before <= (t.posted - r.due_date).days <= s.days_after)]
+    if loose:
+        r = min(loose, key=lambda r: abs((t.posted - r.due_date).days))
+        return 'row %s has the name but is not linked to the item the rule names' % r.id
+    if not mine:
+        return 'the rule names no item or row that has rows'
+    r = min(mine, key=lambda r: (abs((t.posted - r.due_date).days), r.state is not RowState.OPEN))
+    days = (t.posted - r.due_date).days
+    where = 'nearest row %s (due %d/%d)' % (r.id, r.due_date.month, r.due_date.day)
+    if r.state is not RowState.OPEN:
+        return '%s is %s' % (where, r.state)
+    if r.id in claimed:
+        return '%s was taken by another bank line in this upload' % where
+    if not -s.days_before <= days <= s.days_after:
+        return '%s is %d days %s the posting; the window is %d days before to %d after' % (
+            where, abs(days), 'after' if days < 0 else 'before', s.days_before, s.days_after)
+    return '%s was not offered' % where
+
+
 def match(budget: Budget, prepared: Prepared) -> ReconcileResult:
     s = budget.settings.reconcile
     rows = [r for r in ordered(budget.rows) if r.state is RowState.OPEN]
@@ -231,7 +260,8 @@ def match(budget: Budget, prepared: Prepared) -> ReconcileResult:
                 auto.append(AutoMatch(t.id, c[0].id, rule.id))
             else:
                 names = ', '.join(target_name(x) for x in rule.targets) or rule.name
-                unknown.append(Unknown(t.id, 'no open %s row near this date' % names))
+                unknown.append(Unknown(t.id, 'no open %s row near this date; %s'
+                                       % (names, _why_not(budget, rule.targets, t, claimed))))
         elif rule.kind is RuleKind.BILL:
             c = candidates(rule.targets, t)
             if c and _within(budget, c[0].amount, t.amount):
@@ -313,7 +343,8 @@ def match(budget: Budget, prepared: Prepared) -> ReconcileResult:
         if not alts:
             near = same_month(rule.targets, t)
             if near is None:
-                unknown.append(Unknown(t.id, 'known payee (%s) but no open row in the date window' % rule.name))
+                unknown.append(Unknown(t.id, 'known payee (%s) but no open row in the date window; %s'
+                                       % (rule.name, _why_not(budget, rule.targets, t, claimed))))
                 continue
             # a bill paid in pieces (#96): offer the month's row, to take the payment off or to clear. Not claimed,
             # so the month's other pieces can be offered the same row.

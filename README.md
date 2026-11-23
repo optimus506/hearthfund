@@ -99,7 +99,8 @@ On **More > Import** (owners only):
 1. **Money > Uploads**: upload a bank export: CSV, OFX or QFX. A CSV with a new column layout asks once which column is the
    date, description, amount (or debit/credit) and balance; save it as a layout for next time. Account numbers in
    descriptions and file names are masked, and the file itself is not kept.
-2. **Preview** (a dry run). The app finds the posting whose running balance equals your checkbook balance and takes
+2. **Review** (a dry run). It opens in its own window (full screen on a phone) as soon as the upload or bank sync is in,
+   and again from **Review** on a waiting upload or **Review the matches** on Home; closing it changes nothing. The app finds the posting whose running balance equals your checkbook balance and takes
    everything newer, so the export must reach back to that point. (Files without a balance column are taken from the
    last reconciled date on, skipping postings already seen.)
    - **Cleared automatically:** postings that match a payee rule and the bill's amount (within 10% or $25).
